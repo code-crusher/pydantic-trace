@@ -395,6 +395,21 @@ impl UnionChoices {
             }
         }
 
+        // Finally, retry the choices that match by subclass, serializing their nested values
+        // without checks. This ensures a value is serialized with the union choice it matches,
+        // even if some of its (nested) values are invalid for the declared schema, instead of
+        // falling back to inference which would use the serializer of the runtime type.
+        if self.retry_with_lax_check() {
+            let state = &mut scoped_check_level(state, SerCheck::LaxLenient);
+            for comb_serializer in &self.choices {
+                if comb_serializer.retry_with_lax_check()
+                    && let Ok(v) = selector(comb_serializer, state)
+                {
+                    return Ok(Some(v));
+                }
+            }
+        }
+
         // ... and if that still didn't work, we register all collected errors as warnings
         register_union_serialization_warnings(state, &errors);
 

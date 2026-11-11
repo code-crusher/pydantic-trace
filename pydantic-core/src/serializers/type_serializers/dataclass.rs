@@ -124,7 +124,7 @@ impl DataclassSerializer {
     fn allow_value(&self, value: &Bound<'_, PyAny>, state: &SerializationState<'_>) -> PyResult<bool> {
         match state.check {
             SerCheck::Strict => Ok(value.get_type().is(self.class.bind(value.py()))),
-            SerCheck::Lax => value.is_instance(self.class.bind(value.py())),
+            SerCheck::Lax | SerCheck::LaxLenient => value.is_instance(self.class.bind(value.py())),
             SerCheck::None => value.hasattr(intern!(value.py(), "__dataclass_fields__")),
         }
     }
@@ -147,6 +147,11 @@ impl DataclassSerializer {
         do_serialize: S,
     ) -> Result<S::Ok, S::Error> {
         if self.allow_value(value, state)? {
+            // In a lenient union pass, the dataclass was matched (as a subclass), so nested values
+            // are serialized without checks: issues are emitted as warnings instead of
+            // disqualifying this choice (see `SerCheck::LaxLenient`).
+            let nested_check = state.check.for_nested();
+            let state = &mut state.scoped_set(|s| &mut s.check, nested_check);
             let state = &mut state.scoped_set(|s| &mut s.model, Some(value.clone()));
             if let CombinedSerializer::Fields(ref fields_serializer) = *self.serializer {
                 // Fast path uses known dataclass fields to avoid needing to create a dict of field values

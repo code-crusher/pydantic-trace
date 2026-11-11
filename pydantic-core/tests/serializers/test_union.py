@@ -375,6 +375,53 @@ def test_model_union():
     assert s.to_json(DBUser(name='foo', surname='bar', password_hash='x')) == b'{"name":"foo","surname":"bar"}'
 
 
+def test_union_falls_back_to_matching_choice_with_invalid_nested_value() -> None:
+    """https://github.com/pydantic/pydantic/issues/14032"""
+
+    class Base:
+        def __init__(self, f1: Any) -> None:
+            self.f1 = f1
+
+    class Sub(Base):
+        def __init__(self, f1: Any, f2: str) -> None:
+            super().__init__(f1)
+            self.f2 = f2
+
+    s = SchemaSerializer(
+        core_schema.union_schema(
+            [
+                core_schema.model_schema(
+                    Base, core_schema.model_fields_schema({'f1': core_schema.model_field(core_schema.str_schema())})
+                ),
+                core_schema.bool_schema(),
+            ]
+        )
+    )
+
+    # `f1` is invalid for `Base.f1`, so no choice serializes cleanly. The matching `Base`
+    # choice should still be used (rather than inference with the runtime type `Sub`, which
+    # would also include `f2`), emitting a warning for the invalid value only.
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        assert s.to_python(Sub(f1=123, f2='bob')) == {'f1': 123}
+    assert len(w) == 1
+    message = str(w[0].message)
+    assert 'Expected `str`' in message
+    assert 'f2' not in message
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        assert s.to_python(Sub(f1=123, f2='bob'), mode='json') == {'f1': 123}
+        assert s.to_json(Sub(f1=123, f2='bob')) == b'{"f1":123}'
+    assert len(w) == 2
+
+    # valid values still match the first choice, without any warnings
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        assert s.to_python(Sub(f1='a', f2='bob')) == {'f1': 'a'}
+    assert len(w) == 0
+
+
 @pytest.mark.parametrize(('data', 'json_value'), [(False, 'false'), ('abc', '"abc"')])
 def test_union_literal_with_other_type(data, json_value):
     class Model(BaseModel):

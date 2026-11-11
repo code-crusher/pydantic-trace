@@ -125,7 +125,7 @@ impl TypeSerializer for FloatSerializer {
             },
             IsType::Subclass => match state.check {
                 SerCheck::Strict => Err(PydanticSerializationUnexpectedValue::new_from_msg(None).to_py_err()),
-                SerCheck::Lax | SerCheck::None => match state.extra.mode {
+                SerCheck::Lax | SerCheck::LaxLenient | SerCheck::None => match state.extra.mode {
                     SerMode::Json => {
                         let v = value.extract::<f64>()?;
                         match inf_nan_to_python(py, v, self.inf_nan_mode) {

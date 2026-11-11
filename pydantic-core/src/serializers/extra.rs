@@ -256,11 +256,23 @@ pub(crate) enum SerCheck {
     Strict,
     // check but allow subclasses
     Lax,
+    // check but allow subclasses, and serialize nested values without checks (issues are
+    // emitted as warnings instead of disqualifying the choice). Used by unions as a last
+    // resort, so that the choice matching the runtime value is used rather than inference.
+    LaxLenient,
 }
 
 impl SerCheck {
     pub fn enabled(self) -> bool {
         self != SerCheck::None
+    }
+
+    /// The check level to use when serializing the inner values of a matched choice.
+    pub fn for_nested(self) -> SerCheck {
+        match self {
+            SerCheck::LaxLenient => SerCheck::None,
+            check => check,
+        }
     }
 }
 

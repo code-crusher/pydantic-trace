@@ -2,6 +2,7 @@
 New tests for v2 of serialization logic.
 """
 
+import dataclasses
 import json
 import pickle
 import re
@@ -1211,6 +1212,65 @@ def test_subclass_support_unions() -> None:
     # confirming same serialization + validation behavior as for a single list (not a union)
     s = Shelter(pets=[Dog(name='fluffy', breed='lab'), Dog(name='patches', breed='boxer')])
     assert s.model_dump() == {'pets': [{'name': 'fluffy'}, {'name': 'patches'}]}
+
+
+def test_union_fallback_uses_matching_model_choice() -> None:
+    """https://github.com/pydantic/pydantic/issues/14032"""
+
+    class Base(BaseModel):
+        f1: str
+
+    class Sub(Base):
+        f2: str
+
+    class Single(BaseModel):
+        item: Base
+
+    class Multi(BaseModel):
+        item: Base | bool
+
+    sub = Sub(f1='alice', f2='bob')
+    assert Multi(item=sub).model_dump() == {'item': {'f1': 'alice'}}
+
+    # any value invalid for `Base.f1`
+    sub.f1 = 123  # type: ignore[assignment]
+
+    # without a union, the invalid value is emitted as-is with a warning
+    with pytest.warns(UserWarning, match='Expected `str`'):
+        assert Single(item=sub).model_dump() == {'item': {'f1': 123}}
+
+    # with a union, the matching `Base` choice should still be used (rather than falling back
+    # to inference, which would serialize with `Sub`'s serializer and include `f2`)
+    with pytest.warns(UserWarning, match='Expected `str`'):
+        assert Multi(item=sub).model_dump() == {'item': {'f1': 123}}
+
+    with pytest.warns(UserWarning, match='Expected `str`'):
+        assert Multi(item=sub).model_dump_json() == '{"item":{"f1":123}}'
+
+
+def test_union_fallback_uses_matching_dataclass_choice() -> None:
+    """https://github.com/pydantic/pydantic/issues/14032"""
+
+    @dataclasses.dataclass
+    class Base:
+        f1: str
+
+    @dataclasses.dataclass
+    class Sub(Base):
+        f2: str
+
+    ta = TypeAdapter(Base | bool)
+
+    sub = Sub(f1='alice', f2='bob')
+    assert ta.dump_python(sub) == {'f1': 'alice'}
+
+    sub.f1 = 123  # type: ignore[assignment]
+
+    with pytest.warns(UserWarning, match='Expected `str`'):
+        assert ta.dump_python(sub) == {'f1': 123}
+
+    with pytest.warns(UserWarning, match='Expected `str`'):
+        assert ta.dump_json(sub) == b'{"f1":123}'
 
 
 def test_nested_union_errors_formatted_lazily() -> None:

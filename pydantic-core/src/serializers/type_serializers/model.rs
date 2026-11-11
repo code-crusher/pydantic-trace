@@ -144,7 +144,7 @@ impl ModelSerializer {
     fn allow_value(&self, value: &Bound<'_, PyAny>, check: SerCheck) -> PyResult<bool> {
         match check {
             SerCheck::Strict => Ok(value.get_type().is(&self.class)),
-            SerCheck::Lax => value.is_instance(self.class.bind(value.py())),
+            SerCheck::Lax | SerCheck::LaxLenient => value.is_instance(self.class.bind(value.py())),
             SerCheck::None => value.hasattr(intern!(value.py(), "__dict__")),
         }
     }
@@ -152,7 +152,7 @@ impl ModelSerializer {
     fn allow_value_root_model(&self, value: &Bound<'_, PyAny>, check: SerCheck) -> PyResult<bool> {
         match check {
             SerCheck::Strict => Ok(value.get_type().is(&self.class)),
-            SerCheck::Lax | SerCheck::None => value.is_instance(self.class.bind(value.py())),
+            SerCheck::Lax | SerCheck::LaxLenient | SerCheck::None => value.is_instance(self.class.bind(value.py())),
         }
     }
 
@@ -188,6 +188,11 @@ impl ModelSerializer {
 
         let inner_value = self.get_inner_value(value, dict, &state.extra)?;
 
+        // In a lenient union pass, the model was matched (as a subclass), so nested values are
+        // serialized without checks: issues are emitted as warnings instead of disqualifying
+        // this choice (see `SerCheck::LaxLenient`).
+        let nested_check = state.check.for_nested();
+        let state = &mut state.scoped_set(|s| &mut s.check, nested_check);
         let state = &mut state.scoped_set(|s| &mut s.model, Some(value.clone()));
         do_serialize.serialize_no_infer(&self.serializer, &inner_value, state)
     }
@@ -222,6 +227,8 @@ impl ModelSerializer {
             &self.serializer
         };
 
+        let nested_check = state.check.for_nested();
+        let state = &mut state.scoped_set(|s| &mut s.check, nested_check);
         let state = &mut state.scoped_set_field_name(Some(root_field.clone()));
         let state = &mut state.scoped_set(|s| &mut s.model, Some(value.clone()));
         do_serialize.serialize_no_infer(serializer, &root, state)
