@@ -2624,6 +2624,33 @@ def test_bytes_constrained_types(field_type, expected_schema):
     assert Model.model_json_schema() == base_schema
 
 
+@pytest.mark.parametrize(
+    'val_json_bytes,ser_json_bytes,val_format,ser_format',
+    [
+        ('base64', 'utf8', 'base64url', 'binary'),
+        ('utf8', 'base64', 'binary', 'base64url'),
+        ('base64', 'base64', 'base64url', 'base64url'),
+        ('utf8', 'utf8', 'binary', 'binary'),
+    ],
+)
+def test_bytes_schema_follows_json_bytes_mode(
+    val_json_bytes: Literal['base64', 'utf8'],
+    ser_json_bytes: Literal['base64', 'utf8'],
+    val_format: str,
+    ser_format: str,
+) -> None:
+    """https://github.com/pydantic/pydantic/issues/14004"""
+
+    class Model(BaseModel):
+        model_config = ConfigDict(val_json_bytes=val_json_bytes, ser_json_bytes=ser_json_bytes)
+
+        x: bytes
+
+    assert Model.model_json_schema()['properties']['x']['format'] == val_format
+    assert Model.model_json_schema(mode='validation')['properties']['x']['format'] == val_format
+    assert Model.model_json_schema(mode='serialization')['properties']['x']['format'] == ser_format
+
+
 def test_optional_dict():
     class Model(BaseModel):
         something: dict[str, Any] | None = None

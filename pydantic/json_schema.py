@@ -846,7 +846,10 @@ class GenerateJsonSchema:
         Returns:
             The generated JSON schema.
         """
-        json_schema = {'type': 'string', 'format': 'base64url' if self._config.ser_json_bytes == 'base64' else 'binary'}
+        # Validation decodes JSON input according to `val_json_bytes`, while serialization output follows
+        # `ser_json_bytes`, so the format should match the setting relevant for the current mode:
+        bytes_mode = self._config.ser_json_bytes if self.mode == 'serialization' else self._config.val_json_bytes
+        json_schema = {'type': 'string', 'format': 'base64url' if bytes_mode == 'base64' else 'binary'}
         self.update_with_validations(json_schema, schema, self.ValidationsMapping.bytes)
         return json_schema
 
