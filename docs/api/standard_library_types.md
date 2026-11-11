@@ -205,7 +205,10 @@ Pydantic also provides the following types to further constrain the allowed inte
 
 <h4>Strictness</h4>
 
-In [strict mode](../concepts/strict_mode.md), only integer values are valid. Pydantic provides the [`StrictInt`][pydantic.types.StrictInt]
+In [strict mode](../concepts/strict_mode.md), only integer values are valid. In JSON mode, floats with a zero
+fractional part (e.g. `2.0`) are also accepted, as JSON Schema defines integers mathematically
+([JSON Schema specification](https://datatracker.ietf.org/doc/html/draft-bhutton-json-schema-00#section-4.2.2)).
+Pydantic provides the [`StrictInt`][pydantic.types.StrictInt]
 type as a convenience to [using the `Strict()` metadata class](../concepts/strict_mode.md#using-the-strict-metadata-class).
 
 <!-- old anchor added for backwards compatibility -->

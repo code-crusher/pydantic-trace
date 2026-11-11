@@ -187,6 +187,13 @@ table_rows: list[Row] = [
     ),
     Row(
         int,
+        float,
+        strict=True,
+        json_input=True,
+        condition='Must be exact int, e.g. `val % 1 == 0`, raises error for `nan`, `inf`.',
+    ),
+    Row(
+        int,
         Decimal,
         python_input=True,
         condition='Must be exact int, e.g. `val % 1 == 0`.',

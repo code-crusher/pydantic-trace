@@ -8,6 +8,7 @@ from pydantic_core import SchemaError
 
 from pydantic import (
     BaseModel,
+    Field,
     NegativeInt,
     NonNegativeInt,
     NonPositiveInt,
@@ -165,6 +166,30 @@ def test_strict_int():
 
     with pytest.raises(ValidationError, match=r'Input should be a valid integer \[type=int_type,'):
         ta.validate_python(True)
+
+
+def test_strict_int_json_float_with_zero_fractional_part():
+    """JSON Schema defines integers mathematically, so `2.0` is a valid integer in JSON strict mode.
+
+    https://github.com/pydantic/pydantic/issues/13799
+    """
+
+    class Model(BaseModel):
+        value: int = Field(strict=True)
+        constrained: Annotated[int, Field(strict=True, ge=0)] = 0
+
+    assert Model.model_validate_json('{"value": 2.0, "constrained": 3.0}') == Model(value=2, constrained=3)
+    assert TypeAdapter(int).validate_json('2.0', strict=True) == 2
+    assert TypeAdapter(StrictInt).validate_json('2.0') == 2
+
+    with pytest.raises(ValidationError, match=r'got a number with a fractional part \[type=int_from_float,'):
+        Model.model_validate_json('{"value": 2.5}')
+    with pytest.raises(ValidationError, match=r'got a number with a fractional part \[type=int_from_float,'):
+        Model.model_validate_json('{"value": 2, "constrained": 3.5}')
+
+    # Python input is unaffected: floats are still rejected in strict mode.
+    with pytest.raises(ValidationError, match=r'Input should be a valid integer \[type=int_type,'):
+        Model.model_validate({'value': 2.0})
 
 
 @pytest.mark.parametrize(

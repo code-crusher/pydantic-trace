@@ -303,16 +303,6 @@ def test_negative_json(input_value, expected):
         (1, 1),
         (42, 42),
         pytest.param(
-            42.0,
-            Err('Input should be a valid integer [type=int_type, input_value=42.0, input_type=float]'),
-            id='float-exact',
-        ),
-        pytest.param(
-            42.5,
-            Err('Input should be a valid integer [type=int_type, input_value=42.5, input_type=float]'),
-            id='float-remainder',
-        ),
-        pytest.param(
             '42', Err("Input should be a valid integer [type=int_type, input_value='42', input_type=str]"), id='string'
         ),
         pytest.param(
@@ -327,6 +317,24 @@ def test_int_strict(py_and_json: PyAndJson, input_value, expected):
             v.validate_test(input_value)
     else:
         assert v.validate_test(input_value) == expected
+
+
+def test_int_strict_float(py_and_json: PyAndJson):
+    """JSON Schema defines integers mathematically, so floats with a zero fractional part are valid integers in JSON.
+
+    https://github.com/pydantic/pydantic/issues/13799
+    """
+    v = py_and_json({'type': 'int', 'strict': True})
+    if v.validator_type == 'json':
+        assert v.validate_test(42.0) == 42
+        assert v.validate_test(-42.0) == -42
+        with pytest.raises(ValidationError, match=r'got a number with a fractional part \[type=int_from_float'):
+            v.validate_test(42.5)
+    else:
+        with pytest.raises(ValidationError, match=r'Input should be a valid integer \[type=int_type'):
+            v.validate_test(42.0)
+        with pytest.raises(ValidationError, match=r'Input should be a valid integer \[type=int_type'):
+            v.validate_test(42.5)
 
 
 @pytest.mark.parametrize(

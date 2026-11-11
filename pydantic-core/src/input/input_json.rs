@@ -172,7 +172,11 @@ impl<'py, 'data> Input<'py> for JsonValue<'data> {
             JsonValue::Int(i) => Ok(ValidationMatch::exact(EitherInt::I64(*i))),
             JsonValue::BigInt(b) => Ok(ValidationMatch::exact(EitherInt::BigInt(b.clone()))),
             JsonValue::Bool(b) if !strict => Ok(ValidationMatch::lax(EitherInt::I64((*b).into()))),
-            JsonValue::Float(f) if !strict => float_as_int(self, *f).map(ValidationMatch::lax),
+            // JSON Schema defines integers mathematically, so a float with a zero fractional
+            // part (e.g. `2.0`) is a valid integer, even in strict mode:
+            // https://datatracker.ietf.org/doc/html/draft-bhutton-json-schema-00#section-4.2.2
+            JsonValue::Float(f) if strict => float_as_int(self, *f).map(ValidationMatch::strict),
+            JsonValue::Float(f) => float_as_int(self, *f).map(ValidationMatch::lax),
             JsonValue::Str(str) if !strict => str_as_int(self, str).map(ValidationMatch::lax),
             _ => Err(ValError::new(ErrorTypeDefaults::IntType, self)),
         }
