@@ -31,6 +31,17 @@ DOCS_ROOT = Path(__file__).parent.parent / 'docs'
 SOURCES_ROOT = Path(__file__).parent.parent / 'pydantic'
 
 
+def find_source_examples() -> list[CodeExample]:
+    """Find the examples from the `pydantic` package source.
+
+    The agent skill shipped inside the package is excluded: its code snippets are
+    illustrative (they are meant to be read by agents, not executed) and are
+    sometimes intentionally wrong or version specific.
+    """
+    examples = find_examples(str(SOURCES_ROOT), skip=sys.platform == 'win32')
+    return [example for example in examples if '.agents' not in example.path.parts]
+
+
 def skip_docs_tests():
     if sys.platform not in {'linux', 'darwin'}:
         return 'not in linux or macos'
@@ -166,7 +177,7 @@ def run_example(example: CodeExample, eval_example: EvalExample, mocker: Any) ->
 
 @pytest.mark.thread_unsafe
 @pytest.mark.skipif(bool(skip_reason), reason=skip_reason or 'not skipping')
-@pytest.mark.parametrize('example', list(find_examples(str(SOURCES_ROOT), skip=sys.platform == 'win32')), ids=str)
+@pytest.mark.parametrize('example', find_source_examples(), ids=str)
 def test_docstrings_examples(example: CodeExample, eval_example: EvalExample, tmp_path: Path, mocker):
     run_example(example, eval_example, mocker)
 

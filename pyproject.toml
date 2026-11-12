@@ -165,6 +165,12 @@ include = [
     '/pydantic',
     '/tests',
 ]
+# The agent skill is shipped inside the `pydantic` package (so that it can be
+# discovered from an installed distribution, e.g. by `library-skills`), and is
+# also exposed at the repository root through a symlink. Prune the symlink so
+# that hatchling doesn't de-duplicate the real files by inode and drop them:
+skip-excluded-dirs = true
+exclude = ['/.agents']
 
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
 content-type = 'text/markdown'
