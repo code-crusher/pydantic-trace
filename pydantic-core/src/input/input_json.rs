@@ -635,6 +635,13 @@ impl<'data> BorrowInput<'_> for JsonValue<'data> {
     }
 }
 
+impl<'data> BorrowInput<'_> for Cow<'_, JsonValue<'data>> {
+    type Input = JsonValue<'data>;
+    fn borrow_input(&self) -> &Self::Input {
+        self.as_ref()
+    }
+}
+
 fn string_to_vec(s: &str) -> JsonArray<'static> {
     JsonArray::new(s.chars().map(|c| JsonValue::Str(c.to_string().into())).collect())
 }
@@ -646,7 +653,7 @@ impl<'data> ValidatedDict<'_> for &'_ JsonObject<'data> {
         Self: 'a;
 
     type Item<'a>
-        = &'a JsonValue<'data>
+        = Cow<'a, JsonValue<'data>>
     where
         Self: 'a;
 
@@ -658,7 +665,7 @@ impl<'data> ValidatedDict<'_> for &'_ JsonObject<'data> {
         &'a self,
         consumer: impl ConsumeIterator<ValResult<(Self::Key<'a>, Self::Item<'a>)>, Output = R>,
     ) -> ValResult<R> {
-        Ok(consumer.consume_iterator(self.as_slice().iter().map(|(k, v)| Ok((k.as_ref(), v)))))
+        Ok(consumer.consume_iterator(self.as_slice().iter().map(|(k, v)| Ok((k.as_ref(), Cow::Borrowed(v))))))
     }
 
     fn last_key(&self) -> Option<Self::Key<'_>> {
@@ -753,7 +760,7 @@ impl<'data> KeywordArgs<'_> for JsonObject<'data> {
     where
         Self: 'a;
     type Item<'a>
-        = &'a JsonValue<'data>
+        = Cow<'a, JsonValue<'data>>
     where
         Self: 'a;
 
@@ -764,6 +771,6 @@ impl<'data> KeywordArgs<'_> for JsonObject<'data> {
         key.json_get(self)
     }
     fn iter(&self) -> impl Iterator<Item = ValResult<(Self::Key<'_>, Self::Item<'_>)>> {
-        self.as_slice().iter().map(|(k, v)| Ok((k.as_ref(), v)))
+        self.as_slice().iter().map(|(k, v)| Ok((k.as_ref(), Cow::Borrowed(v))))
     }
 }

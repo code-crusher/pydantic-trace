@@ -598,6 +598,104 @@ def test_alias_path(py_and_json: PyAndJson, input_value, expected):
         assert output == expected
 
 
+def test_alias_path_wildcard(py_and_json: PyAndJson) -> None:
+    """https://github.com/pydantic/pydantic/issues/13784"""
+    v = py_and_json(
+        {
+            'type': 'model-fields',
+            'fields': {
+                'field_a': {
+                    'validation_alias': ['authors', ..., 'name'],
+                    'type': 'model-field',
+                    'schema': {'type': 'list', 'items_schema': {'type': 'str'}},
+                }
+            },
+        }
+    )
+    assert v.validate_test({'authors': [{'name': 'Alice'}, {'name': 'Bob'}]}) == (
+        {'field_a': ['Alice', 'Bob']},
+        None,
+        {'field_a'},
+    )
+    # items that don't resolve past the wildcard are omitted:
+    assert v.validate_test({'authors': [{'name': 'Alice'}, {}]}) == ({'field_a': ['Alice']}, None, {'field_a'})
+    assert v.validate_test({'authors': []}) == ({'field_a': []}, None, {'field_a'})
+
+
+def test_alias_path_wildcard_nested(py_and_json: PyAndJson) -> None:
+    v = py_and_json(
+        {
+            'type': 'model-fields',
+            'fields': {
+                'field_a': {
+                    'validation_alias': ['groups', ..., ..., 'name'],
+                    'type': 'model-field',
+                    'schema': {'type': 'list', 'items_schema': {'type': 'list', 'items_schema': {'type': 'str'}}},
+                }
+            },
+        }
+    )
+    assert v.validate_test({'groups': [[{'name': 'A'}, {'name': 'B'}], [{'name': 'C'}]]}) == (
+        {'field_a': [['A', 'B'], ['C']]},
+        None,
+        {'field_a'},
+    )
+
+
+def test_alias_path_wildcard_non_sequence_is_not_found(py_and_json: PyAndJson) -> None:
+    v = py_and_json(
+        {
+            'type': 'model-fields',
+            'fields': {
+                'field_a': {
+                    'validation_alias': ['authors', ..., 'name'],
+                    'type': 'model-field',
+                    'schema': {
+                        'type': 'default',
+                        'schema': {'type': 'list', 'items_schema': {'type': 'str'}},
+                        'default': None,
+                    },
+                }
+            },
+        }
+    )
+    assert v.validate_test({'authors': 'not-a-list'}) == ({'field_a': None}, None, set())
+
+
+def test_alias_path_wildcard_extra_forbid(py_and_json: PyAndJson) -> None:
+    v = py_and_json(
+        {
+            'type': 'model-fields',
+            'extra_behavior': 'forbid',
+            'fields': {
+                'field_a': {
+                    'validation_alias': ['authors', ..., 'name'],
+                    'type': 'model-field',
+                    'schema': {'type': 'list', 'items_schema': {'type': 'str'}},
+                }
+            },
+        }
+    )
+    assert v.validate_test({'authors': [{'name': 'Alice'}]}) == ({'field_a': ['Alice']}, None, {'field_a'})
+
+
+def test_alias_path_wildcard_extra_allow(py_and_json: PyAndJson) -> None:
+    v = py_and_json(
+        {
+            'type': 'model-fields',
+            'extra_behavior': 'allow',
+            'fields': {
+                'field_a': {
+                    'validation_alias': ['authors', ..., 'name'],
+                    'type': 'model-field',
+                    'schema': {'type': 'list', 'items_schema': {'type': 'str'}},
+                }
+            },
+        }
+    )
+    assert v.validate_test({'authors': [{'name': 'Alice'}]}) == ({'field_a': ['Alice']}, {}, {'field_a'})
+
+
 @pytest.mark.parametrize(
     'input_value,expected',
     [

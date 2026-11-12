@@ -612,6 +612,22 @@ def test_search_dict_for_alias_path():
     assert ap.search_dict_for_path({'a': 'hello'}) is PydanticUndefined
 
 
+def test_search_dict_for_alias_path_wildcard():
+    """https://github.com/pydantic/pydantic/issues/13784"""
+    ap = AliasPath('a', ..., 'name')
+    assert ap.search_dict_for_path({'a': [{'name': 'x'}, {'name': 'y'}]}) == ['x', 'y']
+    # items failing to resolve past the wildcard are omitted:
+    assert ap.search_dict_for_path({'a': [{'name': 'x'}, {}]}) == ['x']
+    assert ap.search_dict_for_path({'a': 'not-a-list'}) is PydanticUndefined
+    # a trailing wildcard is the identity projection:
+    assert AliasPath('a', ...).search_dict_for_path({'a': [1, 2]}) == [1, 2]
+    # nested wildcards:
+    assert AliasPath('a', ..., ..., 'name').search_dict_for_path({'a': [[{'name': 'x'}], [{'name': 'y'}]]}) == [
+        ['x'],
+        ['y'],
+    ]
+
+
 def test_validation_alias_invalid_value_type():
     m = 'Invalid `validation_alias` type. it should be `str`, `AliasChoices`, or `AliasPath`'
     with pytest.raises(TypeError, match=m):

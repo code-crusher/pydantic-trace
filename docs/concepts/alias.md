@@ -47,6 +47,33 @@ print(user)
 In the `'first_name'` field, we are using the alias `'names'` and the index `0` to specify the path to the first name.
 In the `'last_name'` field, we are using the alias `'names'` and the index `1` to specify the path to the last name.
 
+A `...` (`Ellipsis`) segment of the path acts as a wildcard, mapping the remaining path over every item of
+the sequence found there. This can be used to unpack an array, extracting a field from each of its items:
+
+```python
+from pydantic import AliasPath, BaseModel, Field
+
+
+class Blog(BaseModel):
+    name: str
+    authors: list[str] = Field(
+        validation_alias=AliasPath('authors', ..., 'name')
+    )
+
+
+blog = Blog.model_validate(
+    {
+        'name': 'Blog entry',
+        'authors': [{'name': 'Alice'}, {'name': 'Bob'}],
+    }
+)
+print(blog)
+#> name='Blog entry' authors=['Alice', 'Bob']
+```
+
+Items for which the remaining path can't be resolved are omitted from the resulting list. Multiple `...`
+segments can be used to flatten successively nested arrays, and a trailing `...` returns the items unchanged.
+
 `AliasChoices` is used to specify a list of choices of aliases. Choices that appear first in the list will have higher
 priority during validation. For example:
 

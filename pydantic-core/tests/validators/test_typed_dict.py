@@ -466,6 +466,24 @@ def test_alias_path(py_and_json: PyAndJson, input_value, expected):
         assert output == expected
 
 
+def test_alias_path_wildcard(py_and_json: PyAndJson) -> None:
+    """https://github.com/pydantic/pydantic/issues/13784"""
+    v = py_and_json(
+        {
+            'type': 'typed-dict',
+            'fields': {
+                'field_a': {
+                    'validation_alias': ['authors', ..., 'name'],
+                    'type': 'typed-dict-field',
+                    'schema': {'type': 'list', 'items_schema': {'type': 'str'}},
+                }
+            },
+        }
+    )
+    assert v.validate_test({'authors': [{'name': 'Alice'}, {'name': 'Bob'}]}) == {'field_a': ['Alice', 'Bob']}
+    assert v.validate_test({'authors': [{'name': 'Alice'}, {}]}) == {'field_a': ['Alice']}
+
+
 @pytest.mark.parametrize(
     'input_value,expected',
     [

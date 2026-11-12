@@ -186,6 +186,25 @@ def test_aliases(py_and_json: PyAndJson):
     )
 
 
+def test_alias_path_wildcard(py_and_json: PyAndJson) -> None:
+    """https://github.com/pydantic/pydantic/issues/13784"""
+    schema = core_schema.dataclass_args_schema(
+        'MyDataclass',
+        [
+            core_schema.dataclass_field(
+                name='authors',
+                schema=core_schema.list_schema(core_schema.str_schema()),
+                validation_alias=['authors', ..., 'name'],
+            ),
+        ],
+    )
+    v = py_and_json(schema)
+    assert v.validate_test({'authors': [{'name': 'Alice'}, {'name': 'Bob'}]}) == (
+        {'authors': ['Alice', 'Bob']},
+        None,
+    )
+
+
 @dataclasses.dataclass
 class FooDataclass:
     a: str

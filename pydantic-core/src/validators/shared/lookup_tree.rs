@@ -41,10 +41,9 @@ impl LookupTree {
             );
         }
         let has_nested_paths = fields.iter().any(|field| {
-            get_field_collection(field)
-                .by_alias
-                .iter()
-                .any(|path| !path.rest().is_empty())
+            let collection = get_field_collection(field);
+            // wildcard paths are skipped by `for_each_path`, so they don't make the tree nested
+            !collection.has_wildcard() && collection.by_alias.iter().any(|path| !path.rest().is_empty())
         });
 
         if has_nested_paths {
@@ -56,6 +55,8 @@ impl LookupTree {
                         PathItem::S(s) => node.map.entry(s.clone()).or_default(),
                         PathItem::Pos(i) => node.list.entry(*i as i64).or_default(),
                         PathItem::Neg(i) => node.list.entry(-(*i as i64)).or_default(),
+                        // paths with a wildcard segment are never added to the tree
+                        PathItem::Wildcard => unreachable!("wildcard paths are not added to the lookup tree"),
                     };
                 }
                 node.fields.push(info);
@@ -89,6 +90,16 @@ fn for_each_path<T>(
 ) {
     for (field_index, field) in fields.iter().enumerate() {
         let collection = get_field_collection(field);
+
+        if collection.has_wildcard() {
+            // Wildcard (`...`) segments can't be represented in the lookup tree, as it only supports
+            // exact keys and indices. Fields with a wildcard alias are resolved through a separate
+            // lookup pass instead, so skip all of their paths here (including non-wildcard alias
+            // choices and the field name), which also keeps the priority ordering between aliases
+            // intact.
+            continue;
+        }
+
         f(
             &collection.by_name,
             LookupFieldInfo {

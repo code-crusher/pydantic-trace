@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use ahash::AHashSet;
@@ -57,6 +58,9 @@ pub struct ModelFieldsValidator {
     from_attributes: bool,
     loc_by_alias: bool,
     /// The lookup tree, used when validating JSON input (see [`Self::validate_json_by_iteration`]).
+    ///
+    /// Fields with a wildcard (`...`) alias are not represented in the tree, as it only supports
+    /// exact keys and indices: they are resolved in a separate pass instead.
     lookup: LookupTree,
     validate_by_alias: Option<bool>,
     validate_by_name: Option<bool>,
@@ -563,13 +567,31 @@ impl ModelFieldsValidator {
         for ((field_idx, field), field_input) in
             std::iter::zip(self.fields.iter().enumerate(), field_inputs.iter().copied())
         {
-            let field_input_with_lookup_path = field_input.map(|(field_info, value)| {
-                let lookup_path = if let Some(alias_index) = field_info.alias_index() {
-                    &field.lookup_path_collection.by_alias[alias_index]
-                } else {
-                    &field.lookup_path_collection.by_name
-                };
+            // Wildcard (`...`) paths can't be represented in `self.lookup`, so they are resolved
+            // separately, in declaration order so that validators see the same `info.data` as they
+            // would for any other input.
+            let field_input = if field.lookup_path_collection.has_wildcard() {
+                field
+                    .lookup_path_collection
+                    .lookup_paths(state.lookup_type)
+                    .find_map(|path| match path.json_get(json_object) {
+                        Ok(Some(value)) => Some(Ok((path, value))),
+                        Ok(None) => None,
+                        Err(err) => Some(Err(err)),
+                    })
+                    .transpose()?
+            } else {
+                field_input.map(|(field_info, value)| {
+                    let lookup_path = if let Some(alias_index) = field_info.alias_index() {
+                        &field.lookup_path_collection.by_alias[alias_index]
+                    } else {
+                        &field.lookup_path_collection.by_name
+                    };
+                    (lookup_path, Cow::Borrowed(value))
+                })
+            };
 
+            let field_input_with_lookup_path = field_input.map(|(lookup_path, value)| {
                 // mark consumed any existing possible extra for this lookup path's first key
                 if let Some(possible_extra) = possible_extra.as_mut()
                     && let Some(extra) = possible_extra.get_mut(lookup_path.first_key())

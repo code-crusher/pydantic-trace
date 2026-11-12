@@ -156,3 +156,24 @@ def test_by_alias_and_name_config_interaction(
             (),
             {'my_field': 1},
         )
+
+
+def test_alias_path_wildcard(py_and_json: PyAndJson) -> None:
+    """https://github.com/pydantic/pydantic/issues/13784"""
+    v = py_and_json(
+        cs.arguments_v3_schema(
+            [
+                cs.arguments_v3_parameter(
+                    name='a',
+                    schema=cs.list_schema(cs.str_schema()),
+                    alias=['authors', ..., 'name'],
+                    mode='keyword_only',
+                ),
+            ]
+        )
+    )
+    assert v.validate_test(ArgsKwargs((), {'authors': [{'name': 'Alice'}, {'name': 'Bob'}]})) == (
+        (),
+        {'a': ['Alice', 'Bob']},
+    )
+    assert v.validate_test(ArgsKwargs((), {'authors': [{'name': 'Alice'}, {}]})) == ((), {'a': ['Alice']})
