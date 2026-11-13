@@ -1,3 +1,4 @@
+import json
 import re
 from re import Pattern
 from typing import Annotated
@@ -146,3 +147,78 @@ def test_pattern_error(pattern_type, pattern_value, error_type, error_msg):
     assert exc_info.value.errors(include_url=False) == [
         {'type': error_type, 'loc': (), 'msg': error_msg, 'input': pattern_value}
     ]
+
+
+@pytest.mark.parametrize(
+    ('pattern_type', 'pattern', 'expected'),
+    [
+        pytest.param(Pattern[str], re.compile('^regex$'), '^regex$', id='str-no-flags'),
+        pytest.param(Pattern[str], re.compile('^regex$', re.IGNORECASE), '(?i)^regex$', id='str-ignorecase'),
+        pytest.param(
+            Pattern[str], re.compile('^regex$', re.IGNORECASE | re.MULTILINE), '(?im)^regex$', id='str-multiple-flags'
+        ),
+        pytest.param(Pattern[str], re.compile('(?i)^regex$'), '(?i)^regex$', id='str-inline-flag'),
+        pytest.param(
+            Pattern[str], re.compile('(?i)^regex$', re.MULTILINE), '(?m)(?i)^regex$', id='str-inline-and-flags'
+        ),
+        pytest.param(Pattern[str], re.compile('^regex$', re.ASCII), '(?a)^regex$', id='str-ascii'),
+        pytest.param(Pattern[bytes], re.compile(b'^regex$'), '^regex$', id='bytes-no-flags'),
+        pytest.param(Pattern[bytes], re.compile(b'^regex$', re.IGNORECASE), '(?i)^regex$', id='bytes-ignorecase'),
+    ],
+)
+def test_pattern_serialization_preserves_flags(pattern_type, pattern, expected):
+    """https://github.com/pydantic/pydantic/issues/13761"""
+    ta = TypeAdapter(pattern_type)
+    assert ta.dump_python(pattern, mode='json') == expected
+    assert ta.dump_json(pattern) == json.dumps(expected).encode()
+
+
+@pytest.mark.parametrize(
+    'pattern',
+    [
+        pytest.param(re.compile('^regex$'), id='no-flags'),
+        pytest.param(re.compile('^regex$', re.IGNORECASE), id='ignorecase'),
+        pytest.param(re.compile('^regex$', re.IGNORECASE | re.MULTILINE), id='multiple-flags'),
+        pytest.param(re.compile('(?i)^regex$'), id='inline-flag'),
+        pytest.param(re.compile('(?i)^regex$', re.MULTILINE), id='inline-and-flags'),
+        pytest.param(re.compile('^regex$', re.ASCII), id='ascii'),
+        pytest.param(re.compile('^regex$', re.DOTALL | re.VERBOSE), id='dotall-verbose'),
+        pytest.param(re.compile('^reg # comment\nex$', re.VERBOSE), id='verbose-comment'),
+    ],
+)
+def test_pattern_json_round_trip_preserves_flags(pattern):
+    """https://github.com/pydantic/pydantic/issues/13761"""
+
+    class Model(BaseModel):
+        pattern: Pattern[str]
+
+    loaded = Model.model_validate_json(Model(pattern=pattern).model_dump_json())
+    assert loaded.pattern.flags == pattern.flags
+    # The flags are effective, i.e. the deserialized pattern matches the same strings.
+    for value in ['regex', 'REGEX', 'regex\nREGEX', 'not-a-match']:
+        assert bool(loaded.pattern.search(value)) == bool(pattern.search(value))
+
+
+def test_pattern_json_serialization_keeps_flags_that_affect_matching():
+    """https://github.com/pydantic/pydantic/issues/13761"""
+
+    class Model(BaseModel):
+        pattern: Pattern[str]
+
+    dumped = Model(pattern=re.compile('^regex$', re.IGNORECASE)).model_dump_json()
+    loaded = Model.model_validate_json(dumped)
+    assert loaded.pattern.match('REGEX')
+    assert loaded.pattern.flags == re.IGNORECASE | re.UNICODE
+
+
+def test_pattern_json_round_trip_text_only_valid_with_flags():
+    """https://github.com/pydantic/pydantic/issues/13761"""
+
+    class Model(BaseModel):
+        pattern: Pattern[str]
+
+    # The text alone is invalid: the unterminated group is inside a comment, so `re.VERBOSE` is required.
+    pattern = re.compile('a # (unclosed', re.VERBOSE)
+    loaded = Model.model_validate_json(Model(pattern=pattern).model_dump_json())
+    assert loaded.pattern.flags == pattern.flags
+    assert loaded.pattern.match('a')

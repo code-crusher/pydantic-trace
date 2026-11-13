@@ -1707,8 +1707,10 @@ Standard library type: [`re.Pattern`][] (deprecated alias: [`typing.Pattern`][])
 In [Python mode](../concepts/serialization.md#python-mode), [`Pattern`][re.Pattern] instances are
 serialized as is.
 
-In [JSON mode](../concepts/serialization.md#json-mode), they are serialized as strings (note that flags
-are currently *not* preserved).
+In [JSON mode](../concepts/serialization.md#json-mode), they are serialized as strings. Regex flags are
+preserved by prepending them to the pattern as an inline `(?...)` group, e.g. `re.compile('abc', re.IGNORECASE)`
+is serialized as `'(?i)abc'`. As a result, flags set through the `flags` argument change the serialized
+pattern, but the pattern still round-trips and matches the same strings.
 
 <!-- old anchor added for backwards compatibility -->
 <!-- markdownlint-disable-next-line no-empty-links -->

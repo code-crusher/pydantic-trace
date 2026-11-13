@@ -1836,11 +1836,13 @@ class GenerateSchema:
         return core_schema.generator_schema(self.generate_schema(item_type))
 
     def _pattern_schema(self, pattern_type: Any) -> core_schema.CoreSchema:
-        from . import _validators
+        from . import _serializers, _validators
 
         metadata = {'pydantic_js_functions': [lambda _1, _2: {'type': 'string', 'format': 'regex'}]}
         ser = core_schema.plain_serializer_function_ser_schema(
-            attrgetter('pattern'), when_used='json', return_schema=core_schema.str_schema()
+            _serializers.serialize_pattern,
+            when_used='json',
+            return_schema=core_schema.union_schema([core_schema.str_schema(), core_schema.bytes_schema()]),
         )
         if pattern_type is typing.Pattern or pattern_type is re.Pattern:
             # bare type
