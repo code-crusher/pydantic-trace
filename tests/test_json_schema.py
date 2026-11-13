@@ -3631,7 +3631,9 @@ def test_mode_name_causes_no_conflict():
         pass
 
     class Model(BaseModel):
-        # Ensure the validation and serialization schemas are different:
+        # Ensure the validation and serialization schemas are different (`serialize_by_alias` must be
+        # enabled for the `serialization_alias` to be used as a key in the serialization JSON schema):
+        model_config = ConfigDict(serialize_by_alias=True)
         x: Organization = Field(validation_alias='x_validation', serialization_alias='x_serialization')
         y: OrganizationInput
         z: OrganizationOutput
