@@ -583,8 +583,9 @@ class BaseModel(metaclass=_model_construction.ModelMetaclass):
 
         Args:
             by_alias: Whether to use field aliases as keys in the generated JSON Schema. If `None` (the default),
-                aliases are used unless disabled by the configuration (i.e. `validate_by_alias=False` for validation
-                schemas). An explicit value takes precedence over the configuration.
+                aliases are used unless disabled by the configuration (i.e. `validate_by_alias=False` for
+                validation schemas, `serialize_by_alias=False` — the default — for serialization schemas).
+                An explicit value takes precedence over the configuration.
             ref_template: The reference template.
             union_format: The format to use when combining schemas from unions together. Can be one of:
 
