@@ -14,7 +14,10 @@ class DocstringVisitor(ast.NodeVisitor):
         super().__init__()
 
         self.target: str | None = None
-        self.attrs: dict[str, str] = {}
+        # Attributes are recorded as soon as they are annotated, so that the declaring class
+        # can be determined when walking a class hierarchy (a `None` value means the
+        # attribute isn't followed by a docstring in the class body):
+        self.attrs: dict[str, str | None] = {}
         self.previous_node_type: type[ast.AST] | None = None
 
     def visit(self, node: ast.AST) -> Any:
@@ -25,6 +28,7 @@ class DocstringVisitor(ast.NodeVisitor):
     def visit_AnnAssign(self, node: ast.AnnAssign) -> Any:
         if isinstance(node.target, ast.Name):
             self.target = node.target.id
+            self.attrs.setdefault(node.target.id, None)
 
     def visit_Expr(self, node: ast.Expr) -> Any:
         if (
@@ -89,7 +93,7 @@ def _extract_source_from_frame(cls: type[Any]) -> list[str] | None:
         frame = frame.f_back
 
 
-def extract_docstrings_from_cls(cls: type[Any], use_inspect: bool = False) -> dict[str, str]:
+def extract_docstrings_from_cls(cls: type[Any], use_inspect: bool = False) -> dict[str, str | None]:
     """Map model attributes and their corresponding docstring.
 
     Args:
@@ -99,6 +103,9 @@ def extract_docstrings_from_cls(cls: type[Any], use_inspect: bool = False) -> di
 
     Returns:
         A mapping containing attribute names and their corresponding docstring.
+            Attributes that aren't followed by a docstring in the class body are
+            mapped to `None` (relevant to determine which class declares an
+            attribute when walking a class hierarchy).
     """
     if use_inspect or sys.version_info >= (3, 13):
         # On Python < 3.13, `inspect.getsourcelines()` might not work as expected

@@ -313,6 +313,28 @@ GENERATE_SCHEMA_ERRORS = (
 """Errors raised during core schema generation. This does *not* include `InvalidSchemaError`, which is raised during schema cleaning."""
 
 
+def _get_typed_dict_docstrings(typed_dict_cls: type[Any]) -> dict[str, str | None]:
+    """Extract the attribute docstrings of a `TypedDict` class, considering the whole bases chain.
+
+    As opposed to `BaseModel`, a `TypedDict` class rebuilds its fields from the merged
+    annotations, meaning the `FieldInfo` instances of the parent classes (and their
+    descriptions) are not reused. As such, docstrings declared in parent classes
+    must be explicitly collected. The docstring of the most derived class declaring
+    a field wins, mirroring the `BaseModel` behavior (a `None` value means the field
+    is declared in the class body without a docstring).
+
+    The bases chain is computed with the `mro()` helper, taking the `__orig_bases__`
+    of `TypedDict` classes into account (as done in `_get_typed_dict_extra_items()`).
+    """
+    fields_docs: dict[str, str | None] = {}
+    for base in mro(typed_dict_cls):
+        base = get_origin(base) or base
+        if is_typeddict(base):
+            for attr_name, docstring in extract_docstrings_from_cls(base, use_inspect=True).items():
+                fields_docs.setdefault(attr_name, docstring)
+    return fields_docs
+
+
 def _get_typed_dict_extra_items(typed_dict_cls: type[Any]) -> tuple[bool, Any, bool]:
     """Return whether the TypedDict class is closed, the type of its extra items and whether
     they are read-only (as per PEP 728).
@@ -1452,7 +1474,7 @@ class GenerateSchema:
                 decorators.update_from_config(self._config_wrapper)
 
                 if self._config_wrapper.use_attribute_docstrings:
-                    field_docstrings = extract_docstrings_from_cls(typed_dict_cls, use_inspect=True)
+                    field_docstrings = _get_typed_dict_docstrings(typed_dict_cls)
                 else:
                     field_docstrings = None
 
@@ -1476,7 +1498,7 @@ class GenerateSchema:
                     if (
                         field_docstrings is not None
                         and field_info.description is None
-                        and field_name in field_docstrings
+                        and field_docstrings.get(field_name) is not None
                     ):
                         field_info.description = field_docstrings[field_name]
                     update_field_from_config(self._config_wrapper, field_name, field_info)

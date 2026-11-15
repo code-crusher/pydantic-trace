@@ -149,9 +149,25 @@ def _check_protected_namespaces(
 
 
 def _update_fields_from_docstrings(cls: type[Any], fields: dict[str, FieldInfo], use_inspect: bool = False) -> None:
-    fields_docs = extract_docstrings_from_cls(cls, use_inspect=use_inspect)
+    if dataclasses.is_dataclass(cls):
+        # As opposed to `BaseModel`, dataclass fields are rebuilt from the merged annotations,
+        # meaning the `FieldInfo` instances of the parent classes (and their descriptions) are
+        # not reused. As such, docstrings declared on parent dataclasses must be explicitly
+        # collected, the docstring of the most derived class declaring the field winning:
+        fields_docs: dict[str, str | None] = {}
+        for base in cls.__mro__:
+            if not dataclasses.is_dataclass(base):
+                continue
+            # The parent dataclasses aren't being created at this point, so the (more reliable)
+            # frame inspection method can't be used for them:
+            base_docs = extract_docstrings_from_cls(base, use_inspect=use_inspect or base is not cls)
+            for attr_name, docstring in base_docs.items():
+                fields_docs.setdefault(attr_name, docstring)
+    else:
+        fields_docs = extract_docstrings_from_cls(cls, use_inspect=use_inspect)
+
     for ann_name, field_info in fields.items():
-        if field_info.description is None and ann_name in fields_docs:
+        if field_info.description is None and fields_docs.get(ann_name) is not None:
             field_info.description = fields_docs[ann_name]
 
 

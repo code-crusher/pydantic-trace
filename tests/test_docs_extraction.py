@@ -363,7 +363,6 @@ def test_stdlib_docs_extraction_duplicate_class():
     assert ta.json_schema()['properties']['a']['description'] == 'A docs'
 
 
-@pytest.mark.xfail(reason='Current implementation does not take inheritance into account.')
 def test_stdlib_docs_extraction_inheritance():
     @dataclass
     @with_config({'use_attribute_docstrings': True})
@@ -417,6 +416,160 @@ def test_typeddict():
         'title': 'MyModel',
         'type': 'object',
     }
+
+
+def test_typeddict_inheritance():
+    """https://github.com/pydantic/pydantic/issues/13468"""
+
+    @with_config(ConfigDict(use_attribute_docstrings=True))
+    class Parent(TypedDict):
+        a: int
+        """Doc for a."""
+
+    @with_config(ConfigDict(use_attribute_docstrings=True))
+    class Child(Parent):
+        b: int
+        """Doc for b."""
+
+    ta = TypeAdapter(Child)
+
+    assert ta.json_schema() == {
+        'properties': {
+            'a': {'title': 'A', 'type': 'integer', 'description': 'Doc for a.'},
+            'b': {'title': 'B', 'type': 'integer', 'description': 'Doc for b.'},
+        },
+        'required': ['a', 'b'],
+        'title': 'Child',
+        'type': 'object',
+    }
+
+
+def test_typeddict_inheritance_config_from_parent():
+    """The config is inherited from the parent, so `use_attribute_docstrings` applies."""
+
+    @with_config(ConfigDict(use_attribute_docstrings=True))
+    class Parent(TypedDict):
+        a: int
+        """Doc for a."""
+
+    class Child(Parent):
+        b: int
+        """Doc for b."""
+
+    ta = TypeAdapter(Child)
+
+    assert ta.json_schema()['properties'] == {
+        'a': {'title': 'A', 'type': 'integer', 'description': 'Doc for a.'},
+        'b': {'title': 'B', 'type': 'integer', 'description': 'Doc for b.'},
+    }
+
+
+def test_typeddict_inheritance_overridden_docstring():
+    @with_config(ConfigDict(use_attribute_docstrings=True))
+    class Parent(TypedDict):
+        a: int
+        """Doc for a."""
+
+    @with_config(ConfigDict(use_attribute_docstrings=True))
+    class Overridden(Parent):
+        a: int
+        """Overridden doc."""
+
+    @with_config(ConfigDict(use_attribute_docstrings=True))
+    class Redeclared(Parent):
+        # Redeclaring the field without a docstring drops the description,
+        # mirroring the `BaseModel` behavior:
+        a: int
+
+    assert TypeAdapter(Parent).json_schema()['properties']['a']['description'] == 'Doc for a.'
+    assert TypeAdapter(Overridden).json_schema()['properties']['a']['description'] == 'Overridden doc.'
+    assert TypeAdapter(Redeclared).json_schema()['properties']['a'] == {'title': 'A', 'type': 'integer'}
+
+
+def test_typeddict_inheritance_multiple_bases():
+    @with_config(ConfigDict(use_attribute_docstrings=True))
+    class First(TypedDict):
+        a: int
+        """Doc for a."""
+
+    @with_config(ConfigDict(use_attribute_docstrings=True))
+    class Second(TypedDict):
+        b: int
+        """Doc for b."""
+
+    @with_config(ConfigDict(use_attribute_docstrings=True))
+    class Third(First, Second):
+        c: int
+        """Doc for c."""
+
+    assert TypeAdapter(Third).json_schema()['properties'] == {
+        'a': {'title': 'A', 'type': 'integer', 'description': 'Doc for a.'},
+        'b': {'title': 'B', 'type': 'integer', 'description': 'Doc for b.'},
+        'c': {'title': 'C', 'type': 'integer', 'description': 'Doc for c.'},
+    }
+
+
+def test_typeddict_inheritance_generic():
+    @with_config(ConfigDict(use_attribute_docstrings=True))
+    class Parent(TypedDict, Generic[T]):
+        a: T
+        """Doc for a."""
+
+    @with_config(ConfigDict(use_attribute_docstrings=True))
+    class Child(Parent[int]):
+        b: int
+        """Doc for b."""
+
+    assert TypeAdapter(Child).json_schema()['properties'] == {
+        'a': {'title': 'A', 'description': 'Doc for a.'},
+        'b': {'title': 'B', 'type': 'integer', 'description': 'Doc for b.'},
+    }
+
+
+def test_dataclass_docs_extraction_inheritance():
+    @pydantic_dataclass(config=ConfigDict(use_attribute_docstrings=True))
+    class Parent:
+        a: int
+        """A docs"""
+
+    @pydantic_dataclass(config=ConfigDict(use_attribute_docstrings=True))
+    class Child(Parent):
+        b: int
+        """B docs"""
+
+    ta = TypeAdapter(Child)
+
+    assert ta.json_schema() == {
+        'properties': {
+            'a': {'title': 'A', 'type': 'integer', 'description': 'A docs'},
+            'b': {'title': 'B', 'type': 'integer', 'description': 'B docs'},
+        },
+        'required': ['a', 'b'],
+        'title': 'Child',
+        'type': 'object',
+    }
+
+
+def test_dataclass_docs_extraction_inheritance_redeclared_field():
+    @pydantic_dataclass(config=ConfigDict(use_attribute_docstrings=True))
+    class Parent:
+        a: int
+        """A docs"""
+
+    @pydantic_dataclass(config=ConfigDict(use_attribute_docstrings=True))
+    class Overridden(Parent):
+        a: int
+        """A overridden docs"""
+
+    @pydantic_dataclass(config=ConfigDict(use_attribute_docstrings=True))
+    class Redeclared(Parent):
+        # Redeclaring the field without a docstring drops the description,
+        # mirroring the `BaseModel` behavior:
+        a: int
+
+    assert TypeAdapter(Parent).json_schema()['properties']['a']['description'] == 'A docs'
+    assert TypeAdapter(Overridden).json_schema()['properties']['a']['description'] == 'A overridden docs'
+    assert TypeAdapter(Redeclared).json_schema()['properties']['a'] == {'title': 'A', 'type': 'integer'}
 
 
 def test_typeddict_as_field():
