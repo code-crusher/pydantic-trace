@@ -307,6 +307,21 @@ def test_validation_error_traverses_inner_exception() -> None:
     assert all(marker() is None for marker in markers)
 
 
+def test_validation_error_traverses_fraction_parsing_inner_exception() -> None:
+    """https://github.com/pydantic/pydantic/issues/13365"""
+
+    v = SchemaValidator(core_schema.fraction_schema())
+    try:
+        v.validate_python('1/0')
+    except ValidationError as error:
+        inner = error.errors()[0]['ctx']['error']
+        assert isinstance(inner, ZeroDivisionError)
+        assert gc.is_tracked(error)
+        # the original exception is retained in the error context, and as such must be
+        # reported to the garbage collector by the `ValidationError`:
+        assert _gc_reaches(error, inner, depth=10)
+
+
 def _gc_reaches(obj: Any, target: Any, depth: int = 3) -> bool:
     """Whether `target` is reachable from `obj` through `tp_traverse` edges only."""
     if depth == 0:

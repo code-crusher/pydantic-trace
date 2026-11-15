@@ -71,6 +71,24 @@ fn cow_field_from_context<'py, T: FromPyObjectOwned<'py>, B: ToOwned<Owned = T> 
     Ok(Cow::Owned(res))
 }
 
+/// Like [`field_from_context`], but returns `None` when the field is missing from the context.
+fn optional_field_from_context<'py, T: FromPyObjectOwned<'py>>(
+    context: Option<&Bound<'py, PyDict>>,
+    field_name: &str,
+    enum_name: &str,
+    type_name_fn: fn() -> &'static str,
+) -> PyResult<Option<T>> {
+    match context {
+        Some(context) => match context.get_item(field_name)? {
+            Some(value) => value.extract::<T>().map(Some).map_err(
+                |_| py_error_type!(PyTypeError; "{enum_name}: '{field_name}' context value must be a {}", type_name_fn()),
+            ),
+            None => Ok(None),
+        },
+        None => Ok(None),
+    }
+}
+
 macro_rules! basic_error_default {
     (
         $item:ident $(,)?
@@ -147,7 +165,10 @@ macro_rules! error_types {
                 match self {
                     $(Self::$item { context, .. } => context.py_gc_traverse(visit)?,)+
                 }
-                if let Self::ValueError { error, .. } | Self::AssertionError { error, .. } = self {
+                if let Self::ValueError { error, .. }
+                | Self::AssertionError { error, .. }
+                | Self::FractionParsing { error, .. } = self
+                {
                     error.py_gc_traverse(visit)?;
                 }
                 Ok(())
@@ -465,7 +486,9 @@ error_types! {
     },
     // Fraction errors
     FractionType {},
-    FractionParsing {},
+    FractionParsing {
+        error: {ctx_type: Option<Py<PyAny>>, ctx_fn: optional_field_from_context}, // Use Option because the original error might not be available (e.g. when the exponent is too large)
+    },
     // Complex errors
     ComplexType {},
     ComplexStrParsing {},
@@ -825,6 +848,14 @@ impl ErrorType {
             } else {
                 Ok(None)
             }
+        } else if let Self::FractionParsing {
+            error: None,
+            context: None,
+        } = self
+        {
+            // The original error is not always available (e.g. when the exponent is too large).
+            // In this case, don't set the context to `{'error': None}`:
+            Ok(None)
         } else if custom_ctx_used || !dict.is_empty() {
             Ok(Some(dict.into()))
         } else {

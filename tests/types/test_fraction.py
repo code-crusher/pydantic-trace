@@ -152,6 +152,32 @@ def test_fraction_validation_error(input: object, error_type: str):
 
 
 @pytest.mark.parametrize(
+    ['input', 'error'],
+    [
+        ('wrong_format', ValueError("Invalid literal for Fraction: 'wrong_format'")),
+        ('1/0', ZeroDivisionError('Fraction(1, 0)')),
+        (float('inf'), OverflowError('cannot convert Infinity to integer ratio')),
+        (float('nan'), ValueError('cannot convert NaN to integer ratio')),
+    ],
+)
+def test_fraction_validation_error_context(input: object, error: Exception) -> None:
+    """The original exception raised during parsing is stored in the error context.
+
+    https://github.com/pydantic/pydantic/issues/13365
+    """
+
+    ta = TypeAdapter(Fraction)
+
+    with pytest.raises(ValidationError) as exc_info:
+        ta.validate_python(input)
+
+    (exc,) = exc_info.value.errors(include_url=False)
+    ctx_error = exc['ctx']['error']
+    assert type(ctx_error) is type(error)
+    assert ctx_error.args == error.args
+
+
+@pytest.mark.parametrize(
     ['input_value', 'expected'],
     [
         ('1e4300', Fraction(10**4300)),

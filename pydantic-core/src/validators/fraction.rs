@@ -194,32 +194,44 @@ pub(crate) fn create_fraction<'py>(arg: &Bound<'py, PyAny>, input: impl ToErrorV
     if let Ok(s) = arg.cast::<PyString>()
         && exponent_too_large(s)
     {
-        return Err(ValError::new(ErrorTypeDefaults::FractionParsing, input));
+        return Err(ValError::new(
+            ErrorType::FractionParsing {
+                error: None,
+                context: None,
+            },
+            input,
+        ));
     }
     get_fraction_type(py)?
         .call1((arg,))
-        .map_err(|e| handle_fraction_new_error(input, e))
+        .map_err(|e| handle_fraction_new_error(py, input, e))
 }
 
-fn handle_fraction_new_error(input: impl ToErrorValue, error: PyErr) -> ValError {
-    Python::attach(|py| {
-        if error.matches(py, PyTypeError::type_object(py)).unwrap_or(false) {
-            ValError::new(ErrorTypeDefaults::FractionType, input)
-        } else if error
-            .matches(
-                py,
-                (
-                    PyValueError::type_object(py),
-                    PyZeroDivisionError::type_object(py),
-                    PyOverflowError::type_object(py),
-                ),
-            )
-            .unwrap_or(false)
-        {
-            ValError::new(ErrorTypeDefaults::FractionParsing, input)
-        } else {
-            // Let other exceptions bubble up
-            ValError::InternalErr(error)
-        }
-    })
+fn handle_fraction_new_error(py: Python<'_>, input: impl ToErrorValue, error: PyErr) -> ValError {
+    if error.matches(py, PyTypeError::type_object(py)).unwrap_or(false) {
+        ValError::new(ErrorTypeDefaults::FractionType, input)
+    } else if error
+        .matches(
+            py,
+            (
+                PyValueError::type_object(py),
+                PyZeroDivisionError::type_object(py),
+                PyOverflowError::type_object(py),
+            ),
+        )
+        .unwrap_or(false)
+    {
+        // Keep the original error around, as it can provide more insight on why the input
+        // couldn't be parsed as a fraction:
+        ValError::new(
+            ErrorType::FractionParsing {
+                error: pyo3::IntoPyObjectExt::into_py_any(error, py).ok(),
+                context: None,
+            },
+            input,
+        )
+    } else {
+        // Let other exceptions bubble up
+        ValError::InternalErr(error)
+    }
 }
