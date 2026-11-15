@@ -3795,6 +3795,7 @@ class NamedTupleSchema(TypedDict, total=False):
     ref: str
     metadata: dict[str, Any]
     serialization: SerSchema
+    config: CoreConfig
 
 
 def named_tuple_schema(
@@ -3805,6 +3806,7 @@ def named_tuple_schema(
     ref: str | None = None,
     metadata: dict[str, Any] | None = None,
     serialization: SerSchema | None = None,
+    config: CoreConfig | None = None,
 ) -> NamedTupleSchema:
     """
     Returns a schema for a named tuple, e.g.:
@@ -3831,8 +3833,8 @@ def named_tuple_schema(
 
     Fields are validated positionally when the input is a (named) tuple, list or JSON array,
     and by name when the input is a dictionary, mapping or JSON object. Instances of `cls`
-    always revalidate. Strict mode is currently ignored, matching the behavior of the
-    `'call'` core schema previously used for named tuples.
+    always revalidate. In strict mode, only actual tuples are accepted as positional input
+    (rather than lists or other iterables) and only dicts as mapping input.
 
     Args:
         cls: The named tuple class, used to construct instances and perform instance checks
@@ -3841,6 +3843,7 @@ def named_tuple_schema(
         ref: optional unique identifier of the schema, used to reference the schema in other places
         metadata: Any other information you want to include with the schema, not used by pydantic-core
         serialization: Custom serialization schema
+        config: The config to use for the named tuple, such as `strict` and `extra_fields_behavior`
     """
     return _dict_not_none(
         type='named-tuple',
@@ -3850,6 +3853,7 @@ def named_tuple_schema(
         ref=ref,
         metadata=metadata,
         serialization=serialization,
+        config=config,
     )
 
 

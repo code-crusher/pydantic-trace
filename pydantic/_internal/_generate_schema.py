@@ -1586,6 +1586,7 @@ class GenerateSchema:
                     for field_name, annotation in annotations.items()
                 ],
                 ref=namedtuple_ref,
+                config=self._config_wrapper.core_config(title=None),
             )
             return self.defs.create_definition_reference_schema(schema)
 

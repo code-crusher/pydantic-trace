@@ -7,10 +7,11 @@ use pyo3::types::{PyDict, PyList, PyTuple, PyType};
 
 use ahash::AHashSet;
 
-use crate::build_tools::py_schema_err;
+use crate::build_tools::{ExtraBehavior, is_strict, py_schema_err, schema_or_config_same};
 use crate::errors::{ErrorType, ErrorTypeDefaults, LocItem, ValError, ValLineError, ValResult, py_err_string};
 use crate::input::{
-    BorrowInput, ConsumeIterator, Input, ValidatedDict, ValidatedTuple, ValidationMatch, input_as_python_instance,
+    BorrowInput, ConsumeIterator, Input, InputType, ValidatedDict, ValidatedTuple, ValidationMatch,
+    input_as_python_instance,
 };
 use crate::lookup_key::{LookupPathCollection, LookupType};
 use crate::tools::SchemaDict;
@@ -32,6 +33,8 @@ impl_py_gc_traverse!(NamedTupleField { validator });
 pub struct NamedTupleValidator {
     class: Py<PyType>,
     fields: Vec<NamedTupleField>,
+    strict: bool,
+    extra_behavior: ExtraBehavior,
     loc_by_alias: bool,
     validate_by_alias: Option<bool>,
     validate_by_name: Option<bool>,
@@ -87,9 +90,11 @@ impl BuildValidator for NamedTupleValidator {
         Ok(CombinedValidator::NamedTuple(Self {
             class: class.into(),
             fields,
+            strict: is_strict(schema, config)?,
+            extra_behavior: ExtraBehavior::from_schema_or_config(py, schema, config, ExtraBehavior::Forbid)?,
             loc_by_alias: config.get_as(intern!(py, "loc_by_alias"))?.unwrap_or(true),
-            validate_by_alias: config.get_as(intern!(py, "validate_by_alias"))?,
-            validate_by_name: config.get_as(intern!(py, "validate_by_name"))?,
+            validate_by_alias: schema_or_config_same(schema, config, intern!(py, "validate_by_alias"))?,
+            validate_by_name: schema_or_config_same(schema, config, intern!(py, "validate_by_name"))?,
             name,
         })
         .into())
@@ -97,6 +102,12 @@ impl BuildValidator for NamedTupleValidator {
 }
 
 impl_py_gc_traverse!(NamedTupleValidator { class, fields });
+
+impl NamedTupleValidator {
+    fn strict_mode(&self, state: &mut ValidationState<'_, '_>) -> bool {
+        state.strict_or(self.strict) && state.extra().input_type == InputType::Python
+    }
+}
 
 impl Validator for NamedTupleValidator {
     fn validate<'py>(
@@ -119,9 +130,8 @@ impl Validator for NamedTupleValidator {
             return self.create_instance(py, input, items);
         }
 
-        // Note: strict mode is currently ignored, as the `'call'` core schema previously
-        // used for named tuples had no strict behavior:
-        match input.validate_tuple(false) {
+        let strict = self.strict_mode(state);
+        match input.validate_tuple(strict) {
             Ok(tuple_match) => {
                 // A tuple, list or JSON array; validate positionally, using indices in error locations:
                 let collection = tuple_match.unpack(state);
@@ -129,7 +139,7 @@ impl Validator for NamedTupleValidator {
                 state.floor_exactness(Exactness::Strict);
                 self.create_instance(py, input, items)
             }
-            Err(ValError::LineErrors(_)) => match input.validate_dict(false) {
+            Err(ValError::LineErrors(_)) => match input.validate_dict(strict) {
                 Ok(dict) => {
                     // A dict, mapping or JSON object; validate by field name:
                     let items = self.validate_dict_input(py, input, state, &dict)?;
@@ -189,6 +199,7 @@ impl NamedTupleValidator {
         let validate_by_alias = state.validate_by_alias_or(self.validate_by_alias);
         let validate_by_name = state.validate_by_name_or(self.validate_by_name);
         let lookup_type = LookupType::from_bools(validate_by_alias, validate_by_name)?;
+        let extra_behavior = state.extra_behavior_or(self.extra_behavior);
 
         for field in &self.fields {
             if let Some((lookup_path, lookup_result)) = field
@@ -238,6 +249,7 @@ impl NamedTupleValidator {
         dict.iterate(CheckExtras {
             used_keys,
             errors: &mut errors,
+            extra_behavior,
         })??;
 
         if errors.is_empty() {
@@ -264,6 +276,7 @@ impl NamedTupleValidator {
 struct CheckExtras<'a> {
     used_keys: AHashSet<&'a str>,
     errors: &'a mut Vec<ValLineError>,
+    extra_behavior: ExtraBehavior,
 }
 
 impl<'py, Key, Value> ConsumeIterator<ValResult<(Key, Value)>> for CheckExtras<'_>
@@ -292,8 +305,9 @@ where
                 }
                 Err(err) => return Err(err),
             };
-            if !self.used_keys.contains(either_str.as_cow()?.as_ref()) {
-                // Named tuples cannot hold extra fields, so extra keys are always forbidden:
+            if !self.used_keys.contains(either_str.as_cow()?.as_ref()) && self.extra_behavior == ExtraBehavior::Forbid {
+                // Named tuples cannot hold extra fields, so extra keys are only reported
+                // as errors when `extra='forbid'`; they are silently dropped otherwise:
                 self.errors.push(ValLineError::new_with_loc(
                     ErrorTypeDefaults::ExtraForbidden,
                     value.borrow_input(),

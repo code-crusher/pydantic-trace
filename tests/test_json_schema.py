@@ -3806,10 +3806,20 @@ def test_namedtuple_default():
     assert LocationBase.model_json_schema() == {
         '$defs': {
             'Coordinates': {
-                'maxItems': 2,
-                'minItems': 2,
-                'prefixItems': [{'title': 'X', 'type': 'number'}, {'title': 'Y', 'type': 'number'}],
-                'type': 'array',
+                'anyOf': [
+                    {
+                        'maxItems': 2,
+                        'minItems': 2,
+                        'prefixItems': [{'title': 'X', 'type': 'number'}, {'title': 'Y', 'type': 'number'}],
+                        'type': 'array',
+                    },
+                    {
+                        'additionalProperties': False,
+                        'properties': {'x': {'title': 'X', 'type': 'number'}, 'y': {'title': 'Y', 'type': 'number'}},
+                        'required': ['x', 'y'],
+                        'type': 'object',
+                    },
+                ]
             }
         },
         'properties': {'coords': {'$ref': '#/$defs/Coordinates', 'default': [34, 42]}},
@@ -3837,10 +3847,20 @@ def test_namedtuple_modify_schema():
     assert Location.model_json_schema() == {
         '$defs': {
             'CustomCoordinates': {
-                'maxItems': 2,
-                'minItems': 2,
-                'prefixItems': [{'title': 'X', 'type': 'integer'}, {'title': 'Y', 'type': 'number'}],
-                'type': 'array',
+                'anyOf': [
+                    {
+                        'maxItems': 2,
+                        'minItems': 2,
+                        'prefixItems': [{'title': 'X', 'type': 'integer'}, {'title': 'Y', 'type': 'number'}],
+                        'type': 'array',
+                    },
+                    {
+                        'additionalProperties': False,
+                        'properties': {'x': {'title': 'X', 'type': 'integer'}, 'y': {'title': 'Y', 'type': 'number'}},
+                        'required': ['x', 'y'],
+                        'type': 'object',
+                    },
+                ]
             }
         },
         'properties': {'coords': {'$ref': '#/$defs/CustomCoordinates', 'default': [34, 42.0]}},

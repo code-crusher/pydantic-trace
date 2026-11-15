@@ -937,6 +937,17 @@ Standard library type: [`typing.NamedTuple`][] (and types created by the [`colle
 * Allows [`dict`][] instances. Keys must match the named tuple field names, and values are validated according to the field definition.
 * Allows instances of the named tuple class (fields are revalidated).
 
+<h4>Strictness</h4>
+
+In [strict mode](../concepts/strict_mode.md), only [`tuple`][] instances (and instances of the named tuple class)
+are valid positional inputs, and only [`dict`][] instances are valid mapping inputs. Strict mode does *not* apply
+to the items of the named tuple.
+
+<h4>Extra</h4>
+
+Named tuples cannot store extra fields. Extra fields in mapping input are forbidden by default and can be ignored or
+allowed using the `extra` configuration option (see [`ConfigDict.extra`][pydantic.ConfigDict.extra]).
+
 <h4>Serialization</h4>
 
 In [Python mode](../concepts/serialization.md#python-mode), named tuples are serialized as tuples. In [JSON mode](../concepts/serialization.md#json-mode),

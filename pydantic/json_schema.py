@@ -1992,6 +1992,8 @@ class GenerateJsonSchema:
             The generated JSON schema.
         """
         prefix_items: list[JsonSchemaValue] = []
+        properties: dict[str, JsonSchemaValue] = {}
+        required: list[str] = []
         min_items = 0
 
         for field in schema['fields']:
@@ -2005,20 +2007,36 @@ class GenerateJsonSchema:
             if 'title' not in field_schema and self.field_title_should_be_set(field['schema']):
                 field_schema['title'] = self.get_title_from_name(name)
             prefix_items.append(field_schema)
+            properties[name] = field_schema
 
             if field['schema']['type'] != 'default':
                 # This assumes that if the field has a default value,
                 # the inner schema must be of type WithDefaultSchema.
                 min_items += 1
+                required.append(name)
 
-        json_schema: JsonSchemaValue = {'type': 'array'}
+        array_schema: JsonSchemaValue = {'type': 'array'}
         if prefix_items:
-            json_schema['prefixItems'] = prefix_items
+            array_schema['prefixItems'] = prefix_items
         if min_items:
-            json_schema['minItems'] = min_items
-        json_schema['maxItems'] = len(prefix_items)
+            array_schema['minItems'] = min_items
+        array_schema['maxItems'] = len(prefix_items)
 
-        return json_schema
+        if self.mode != 'validation':
+            # Serialization always produces an array:
+            return array_schema
+
+        # Named tuples can also be validated from a mapping, so document that input in
+        # addition to the tuple form:
+        object_schema: JsonSchemaValue = {'type': 'object', 'properties': properties}
+        if required:
+            object_schema['required'] = required
+        # Extra fields are forbidden by default (named tuples cannot store them), and can
+        # only be ignored/allowed when explicitly requested via `extra`:
+        if schema.get('config', {}).get('extra_fields_behavior', 'forbid') == 'forbid':
+            object_schema['additionalProperties'] = False
+
+        return {'anyOf': [array_schema, object_schema]}
 
     def arguments_schema(self, schema: core_schema.ArgumentsSchema) -> JsonSchemaValue:
         """Generates a JSON schema that matches a schema that defines a function's arguments.

@@ -68,16 +68,42 @@ def test_namedtuple_schema():
         'type': 'object',
         '$defs': {
             'Position1': {
-                'maxItems': 2,
-                'minItems': 2,
-                'prefixItems': [{'title': 'X', 'type': 'integer'}, {'title': 'Y', 'type': 'integer'}],
-                'type': 'array',
+                'anyOf': [
+                    {
+                        'maxItems': 2,
+                        'minItems': 2,
+                        'prefixItems': [
+                            {'title': 'X', 'type': 'integer'},
+                            {'title': 'Y', 'type': 'integer'},
+                        ],
+                        'type': 'array',
+                    },
+                    {
+                        'additionalProperties': False,
+                        'properties': {
+                            'x': {'title': 'X', 'type': 'integer'},
+                            'y': {'title': 'Y', 'type': 'integer'},
+                        },
+                        'required': ['x', 'y'],
+                        'type': 'object',
+                    },
+                ]
             },
             'Position2': {
-                'maxItems': 2,
-                'minItems': 2,
-                'prefixItems': [{'title': 'X'}, {'title': 'Y'}],
-                'type': 'array',
+                'anyOf': [
+                    {
+                        'maxItems': 2,
+                        'minItems': 2,
+                        'prefixItems': [{'title': 'X'}, {'title': 'Y'}],
+                        'type': 'array',
+                    },
+                    {
+                        'additionalProperties': False,
+                        'properties': {'x': {'title': 'X'}, 'y': {'title': 'Y'}},
+                        'required': ['x', 'y'],
+                        'type': 'object',
+                    },
+                ]
             },
         },
         'properties': {
@@ -333,9 +359,12 @@ def test_namedtuple_from_attributes_error_locs():
     ]
 
 
-def test_namedtuple_strict_ignored():
-    """Strict mode is currently ignored for named tuples, matching the behavior of the
-    `'call'` core schema previously used for them."""
+def test_namedtuple_strict():
+    """https://github.com/pydantic/pydantic/issues/13504
+
+    In strict mode, only tuples (and instances of the named tuple class) are accepted
+    as positional input, and only dicts as mapping input.
+    """
 
     class NT(NamedTuple):
         x: int
@@ -344,10 +373,50 @@ def test_namedtuple_strict_ignored():
 
     assert ta.validate_python(NT(1), strict=True) == NT(1)
     assert ta.validate_python((1,), strict=True) == NT(1)
-    assert ta.validate_python([1], strict=True) == NT(1)
     assert ta.validate_python({'x': 1}, strict=True) == NT(1)
+
+    with pytest.raises(ValidationError) as exc_info:
+        ta.validate_python([1], strict=True)
+    assert exc_info.value.errors(include_url=False) == [
+        {
+            'type': 'named_tuple_type',
+            'loc': (),
+            'msg': 'Input should be a tuple, list, dictionary or an instance of NT',
+            'input': [1],
+            'ctx': {'class_name': 'NT'},
+        }
+    ]
+
+    # JSON inputs are unaffected by strict mode, since JSON only has arrays and objects:
     assert ta.validate_json('[1]', strict=True) == NT(1)
     assert ta.validate_json('{"x": 1}', strict=True) == NT(1)
+
+
+def test_namedtuple_extra():
+    """https://github.com/pydantic/pydantic/issues/13504
+
+    Extra fields in mapping input are honored according to `extra`.
+    """
+
+    class NT(NamedTuple):
+        x: int
+
+    ta = TypeAdapter(NT)
+
+    # `extra` defaults to `'forbid'`:
+    with pytest.raises(ValidationError) as exc_info:
+        ta.validate_python({'x': 1, 'y': 2})
+    assert exc_info.value.errors(include_url=False) == [
+        {
+            'type': 'extra_forbidden',
+            'loc': ('y',),
+            'msg': 'Extra inputs are not permitted',
+            'input': 2,
+        }
+    ]
+
+    assert ta.validate_python({'x': 1, 'y': 2}, extra='ignore') == NT(1)
+    assert ta.validate_python({'x': 1, 'y': 2}, extra='allow') == NT(1)
 
 
 def test_namedtuple_instances_revalidated():
