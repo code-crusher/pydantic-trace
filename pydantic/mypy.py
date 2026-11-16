@@ -12,6 +12,7 @@ from typing import Any
 import mypy.types  # noqa: F401
 from mypy.errorcodes import ErrorCode
 from mypy.expandtype import expand_type, expand_type_by_instance
+from mypy.exprtotype import TypeTranslationError, expr_to_unanalyzed_type
 from mypy.nodes import (
     ARG_NAMED,
     ARG_NAMED_OPT,
@@ -21,6 +22,7 @@ from mypy.nodes import (
     GDEF,
     INVARIANT,
     MDEF,
+    ArgKind,
     Argument,
     AssignmentStmt,
     Block,
@@ -42,6 +44,7 @@ from mypy.nodes import (
     StrExpr,
     SymbolTableNode,
     TempNode,
+    TupleExpr,
     TypeAlias,
     TypeInfo,
     Var,
@@ -181,6 +184,8 @@ class PydanticPlugin(Plugin):
 
     def _pydantic_create_model_callback(self, ctx: DynamicClassDefContext) -> None:
         """Make variables assigned from `create_model()` usable as types by mypy."""
+        self._expand_create_model_kwargs(ctx)
+
         # Determine the base class from __base__ argument if provided
         base_fullname = BASEMODEL_FULLNAME
         for arg_name, arg_expr in zip(ctx.call.arg_names, ctx.call.args, strict=True):
@@ -217,11 +222,122 @@ class PydanticPlugin(Plugin):
 
         ctx.api.add_symbol_table_node(ctx.name, SymbolTableNode(MDEF, info))
 
+        transformer = PydanticModelTransformer(info.defn, ctx.call, ctx.api, self.plugin_config)
+        if not transformer.transform(ctx.call):
+            # Semantic analysis has been deferred, the hook will be called again.
+            return
+
         # Mypy has a quirk for serialization of classes nested in functions. This is
         # a workaround that should work in most cases, until mypy has a better plugin API.
         if '@' in info.fullname:
             _, name = info.fullname.rsplit('.', maxsplit=1)
             ctx.api.modules[ctx.api.cur_mod_id].names[name] = SymbolTableNode(GDEF, info)
+
+    def _expand_create_model_kwargs(self, ctx: DynamicClassDefContext) -> None:
+        """Expand `**field_definitions` into named arguments when they are statically visible.
+
+        `create_model()` is called with the field definitions as keyword arguments, but mypy
+        checks the call against the overloads using the raw expression. When the field
+        definitions are unpacked from a dictionary (e.g. `create_model('M', **fields)`),
+        the plugin cannot see the individual fields and the call doesn't match any overload.
+        Rewriting the call to use named arguments (e.g. `create_model('M', x=(int, ...))`)
+        fixes both issues.
+        """
+        arg_names: list[str | None] = []
+        arg_kinds: list[ArgKind] = []
+        arg_exprs: list[Expression] = []
+        for arg_name, arg_kind, arg_expr in zip(ctx.call.arg_names, ctx.call.arg_kinds, ctx.call.args, strict=True):
+            field_definitions = self._resolve_field_definitions_dict(ctx, arg_expr) if arg_kind == ARG_STAR2 else None
+            if field_definitions is None or not all(
+                isinstance(key, StrExpr) and _is_valid_create_model_kwarg(key.value)
+                for key, _ in field_definitions.items
+            ):
+                arg_names.append(arg_name)
+                arg_kinds.append(arg_kind)
+                arg_exprs.append(arg_expr)
+                continue
+            for key, value in field_definitions.items:
+                assert isinstance(key, StrExpr)
+                arg_names.append(key.value)
+                arg_kinds.append(ARG_NAMED)
+                arg_exprs.append(value)
+        ctx.call.arg_names = arg_names
+        ctx.call.arg_kinds = arg_kinds
+        ctx.call.args = arg_exprs
+
+    def _resolve_field_definitions_dict(self, ctx: DynamicClassDefContext, expr: Expression) -> DictExpr | None:
+        """Return the dictionary literal an expression refers to, if it can be resolved statically.
+
+        Only dictionary literals, and names assigned from a dictionary literal earlier in the
+        same scope, are supported. Anything else (calls, imports, ...) is left alone, as the
+        fields cannot be determined statically.
+        """
+        if isinstance(expr, DictExpr):
+            return expr
+        if not isinstance(expr, NameExpr) or not isinstance(expr.node, Var):
+            return None
+
+        module = ctx.api.modules[ctx.api.cur_mod_id]
+        latest_assignment: tuple[AssignmentStmt, bool] | None = None
+        for stmt, is_conditional in _iter_assignments(_statements_in_scope(module.defs, expr.line)):
+            if stmt.line >= expr.line:
+                continue
+            # Matching on the node identity makes sure only assignments to this variable are taken
+            # into account (as opposed to assignments to same-named variables in other scopes):
+            if any(isinstance(lvalue, NameExpr) and lvalue.node is expr.node for lvalue in stmt.lvalues):
+                # Keep track of the latest assignment, as it shadows previous ones:
+                latest_assignment = (stmt, is_conditional)
+
+        if latest_assignment is None or latest_assignment[1]:
+            # Not assigned, or assigned conditionally (in which case the value depends on
+            # runtime behavior):
+            return None
+        return latest_assignment[0].rvalue if isinstance(latest_assignment[0].rvalue, DictExpr) else None
+
+
+def _is_valid_create_model_kwarg(name: str) -> bool:
+    """Whether a key of a `create_model()` `**kwargs` dictionary can be expanded into a keyword argument."""
+    # Names starting with `__` are arguments of `create_model()` (e.g. `__base__`), the others are fields.
+    return name.startswith('__') or _fields.is_valid_field_name(name)
+
+
+def _statements_in_scope(statements: list[Statement], line: int) -> list[Statement]:
+    """Return the statements of the innermost module, function or class body containing `line`."""
+    for stmt in statements:
+        if stmt.end_line is None or not (stmt.line <= line <= stmt.end_line):
+            continue
+        if isinstance(stmt, FuncDef):
+            return _statements_in_scope(stmt.body.body, line)
+        if isinstance(stmt, ClassDef):
+            return _statements_in_scope(stmt.defs.body, line)
+    return statements
+
+
+def _iter_assignments(statements: list[Statement], conditional: bool = False) -> Iterator[tuple[AssignmentStmt, bool]]:
+    """Iterate over the assignments of the given statements, with whether they are conditional.
+
+    Assignments made inside a conditional or a loop are flagged as such, as they are not
+    guaranteed to be executed.
+    """
+    for stmt in statements:
+        if isinstance(stmt, AssignmentStmt):
+            yield stmt, conditional
+        else:
+            for block in _get_nested_blocks(stmt):
+                yield from _iter_assignments(block.body, True)
+
+
+def _get_nested_blocks(stmt: Statement) -> list[Block]:
+    """Return the blocks nested in a compound statement (e.g. the bodies of an `if` or a `try`)."""
+    body = getattr(stmt, 'body', None)
+    # The body of an `if` statement is a list of blocks (one per condition):
+    blocks = body if isinstance(body, list) else [body] if isinstance(body, Block) else []
+    for attr in ('else_body', 'finally_body'):
+        block = getattr(stmt, attr, None)
+        if isinstance(block, Block):
+            blocks.append(block)
+    blocks.extend(getattr(stmt, 'handlers', []))
+    return blocks
 
 
 class PydanticPluginConfig:
@@ -482,7 +598,7 @@ class PydanticModelTransformer:
 
         self.plugin_config = plugin_config
 
-    def transform(self) -> bool:
+    def transform(self, call: CallExpr | None = None) -> bool:
         """Configures the BaseModel subclass according to the plugin settings.
 
         In particular:
@@ -491,6 +607,10 @@ class PydanticModelTransformer:
         * adds a fields-aware signature for the initializer and construct methods
         * freezes the class if frozen = True
         * stores the fields, config, and if the class is settings in the mypy metadata for access by subclasses
+
+        Args:
+            call: The `create_model()` call, for models created dynamically. The field
+                definitions are then taken from the call instead of the class body.
         """
         info = self._cls.info
         # Tag the class as being processed by the plugin. This is used to detect base classes
@@ -505,6 +625,12 @@ class PydanticModelTransformer:
             if not self._api.final_iteration:
                 self._api.defer()
             return False
+        if call is not None:
+            call_fields = self._collect_fields_from_call(fields, call, config)
+            if call_fields is None:
+                # Some field definitions are not ready, another pass is needed:
+                return False
+            fields = call_fields
         for field in fields:
             if field.type is None or has_placeholder(field.type):
                 # The field type may contain placeholders, e.g. when inheriting from a generic
@@ -532,6 +658,84 @@ class PydanticModelTransformer:
         }
 
         return True
+
+    def _collect_fields_from_call(
+        self, inherited_fields: list[PydanticModelField], call: CallExpr, model_config: ModelConfigData
+    ) -> list[PydanticModelField] | None:
+        """Collects the field definitions supplied to a `create_model()` call.
+
+        The fields defined in the call override the inherited ones, without changing their order
+        (this is what happens at runtime, as the field definitions end up in the class namespace).
+
+        Returns:
+            The fields of the model, or `None` if semantic analysis has to be deferred.
+        """
+        found_fields = {field.name: field for field in inherited_fields}
+        for arg_name, arg_expr in zip(call.arg_names, call.args, strict=True):
+            # The other arguments (e.g. `__base__`) are not field definitions, and fields with
+            # private names are not valid:
+            if arg_name is None or arg_name.startswith('__') or not _fields.is_valid_field_name(arg_name):
+                continue
+            field = self._collect_field_from_call(arg_name, arg_expr, model_config)
+            if field is None:
+                continue
+            if field.type is None:
+                # Semantic analysis has been deferred, the hook will be called again.
+                return None
+            found_fields[arg_name] = field
+        return list(found_fields.values())
+
+    def _collect_field_from_call(
+        self, name: str, expr: Expression, model_config: ModelConfigData
+    ) -> PydanticModelField | None:
+        """Creates a field from one of the field definitions of a `create_model()` call.
+
+        A field definition is either the annotation of the field, or a two-tuple of the
+        annotation and the assigned value (either a default or a [`Field()`][pydantic.Field] call).
+
+        Returns:
+            The field, or `None` if the annotation cannot be analyzed yet.
+        """
+        has_default = False
+        value_expr: Expression | None = None
+        if isinstance(expr, TupleExpr):
+            if len(expr.items) != 2:
+                # Invalid, runtime `create_model()` will raise an error.
+                return None
+            annotation_expr, value_expr = expr.items
+            has_default = self.get_has_default(value_expr)
+        else:
+            annotation_expr = expr
+
+        try:
+            unanalyzed_type = expr_to_unanalyzed_type(annotation_expr, self._api.options, self._api.is_stub_file)
+        except TypeTranslationError:
+            # Not a valid type, mypy will report an error if relevant.
+            return None
+        field_type = self._api.anal_type(unanalyzed_type)
+        if field_type is None:
+            return None
+
+        alias, has_dynamic_alias = self.get_alias_info(value_expr) if value_expr is not None else (None, False)
+        if (
+            has_dynamic_alias
+            and not (model_config.validate_by_name or model_config.populate_by_name)
+            and self.plugin_config.warn_required_dynamic_aliases
+        ):
+            error_required_dynamic_aliases(self._api, annotation_expr)
+
+        return PydanticModelField(
+            name=name,
+            alias=alias,
+            is_frozen=self.is_field_frozen(value_expr) if value_expr is not None else False,
+            has_dynamic_alias=has_dynamic_alias,
+            has_default=has_default,
+            strict=self.get_strict(value_expr) if value_expr is not None else None,
+            line=annotation_expr.line,
+            column=annotation_expr.column,
+            type=field_type,
+            info=self._cls.info,
+        )
 
     def adjust_decorator_signatures(self) -> None:
         """When we decorate a function `f` with `pydantic.field_validator(...)`
@@ -798,8 +1002,8 @@ class PydanticModelTransformer:
                 node,
             )
 
-        has_default = self.get_has_default(stmt)
-        strict = self.get_strict(stmt)
+        has_default = self.get_has_default(stmt.rvalue)
+        strict = self.get_strict(stmt.rvalue)
 
         if sym.type is None and node.is_final and node.is_inferred:
             # This follows the logic from the dataclasses plugin. The following comment is taken verbatim:
@@ -819,14 +1023,14 @@ class PydanticModelTransformer:
                 )
                 node.type = AnyType(TypeOfAny.from_error)
 
-        alias, has_dynamic_alias = self.get_alias_info(stmt)
+        alias, has_dynamic_alias = self.get_alias_info(stmt.rvalue)
         if (
             has_dynamic_alias
             and not (model_config.validate_by_name or model_config.populate_by_name)
             and self.plugin_config.warn_required_dynamic_aliases
         ):
             error_required_dynamic_aliases(self._api, stmt)
-        is_frozen = self.is_field_frozen(stmt)
+        is_frozen = self.is_field_frozen(stmt.rvalue)
 
         init_type = self._infer_dataclass_attr_init_type(sym, lhs.name, stmt)
         return PydanticModelField(
@@ -1042,9 +1246,8 @@ class PydanticModelTransformer:
         return None
 
     @staticmethod
-    def get_has_default(stmt: AssignmentStmt) -> bool:
-        """Returns a boolean indicating whether the field defined in `stmt` is a required field."""
-        expr = stmt.rvalue
+    def get_has_default(expr: Expression) -> bool:
+        """Returns a boolean indicating whether the field with the assigned value `expr` is a required field."""
         if isinstance(expr, TempNode):
             # TempNode means annotation-only, so has no default
             return False
@@ -1064,9 +1267,8 @@ class PydanticModelTransformer:
         return not isinstance(expr, EllipsisExpr)
 
     @staticmethod
-    def get_strict(stmt: AssignmentStmt) -> bool | None:
+    def get_strict(expr: Expression) -> bool | None:
         """Returns the `strict` value of a field if defined, otherwise `None`."""
-        expr = stmt.rvalue
         if isinstance(expr, CallExpr) and isinstance(expr.callee, RefExpr) and expr.callee.fullname == FIELD_FULLNAME:
             for arg, name in zip(expr.args, expr.arg_names, strict=True):
                 if name != 'strict':
@@ -1080,13 +1282,12 @@ class PydanticModelTransformer:
         return None
 
     @staticmethod
-    def get_alias_info(stmt: AssignmentStmt) -> tuple[str | None, bool]:
-        """Returns a pair (alias, has_dynamic_alias), extracted from the declaration of the field defined in `stmt`.
+    def get_alias_info(expr: Expression) -> tuple[str | None, bool]:
+        """Returns a pair (alias, has_dynamic_alias), extracted from the assigned value `expr` of the field.
 
         `has_dynamic_alias` is True if and only if an alias is provided, but not as a string literal.
         If `has_dynamic_alias` is True, `alias` will be None.
         """
-        expr = stmt.rvalue
         if isinstance(expr, TempNode):
             # TempNode means annotation-only
             return None, False
@@ -1110,14 +1311,13 @@ class PydanticModelTransformer:
             return None, True
 
     @staticmethod
-    def is_field_frozen(stmt: AssignmentStmt) -> bool:
-        """Returns whether the field is frozen, extracted from the declaration of the field defined in `stmt`.
+    def is_field_frozen(expr: Expression) -> bool:
+        """Returns whether the field is frozen, extracted from the assigned value `expr` of the field.
 
         Note that this is only whether the field was declared to be frozen in a `<field_name> = Field(frozen=True)`
         sense; this does not determine whether the field is frozen because the entire model is frozen; that is
         handled separately.
         """
-        expr = stmt.rvalue
         if isinstance(expr, TempNode):
             # TempNode means annotation-only
             return False
