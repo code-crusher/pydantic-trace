@@ -50,7 +50,7 @@ class RootModel(BaseModel, Generic[RootModelRootType], metaclass=_RootModelMetac
 
     root: RootModelRootType
 
-    def __init_subclass__(cls, **kwargs):
+    def __init_subclass__(cls, **kwargs: Any) -> None:
         extra = cls.model_config.get('extra')
         if extra is not None:
             raise PydanticUserError(

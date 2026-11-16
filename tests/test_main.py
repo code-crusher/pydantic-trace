@@ -2195,14 +2195,21 @@ def test_class_kwargs_config_and_attr_conflict():
 
 
 def test_class_kwargs_custom_config():
-    if platform.python_implementation() == 'PyPy':
-        msg = r"object.__init_subclass__\(\) got an unexpected keyword argument 'some_config'"
-    else:
-        msg = r'__init_subclass__\(\) takes no keyword arguments'
-    with pytest.raises(TypeError, match=msg):
+    # Non-config class kwargs are not silently swallowed: they are passed on to `__pydantic_init_subclass__`
+    # (and `__init_subclass__`), which may use them (e.g. as a registry key). A kwarg that nobody consumes
+    # is simply ignored, as if `__init_subclass__` had been written to accept `**kwargs`.
+    received = []
 
-        class Model(BaseModel, some_config='new_value'):
-            a: int
+    class Base(BaseModel):
+        @classmethod
+        def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
+            received.append(kwargs)
+            super().__pydantic_init_subclass__(**kwargs)
+
+    class Model(Base, some_config='new_value'):
+        a: int
+
+    assert received == [{'some_config': 'new_value'}]
 
 
 @pytest.mark.parametrize(
@@ -3125,6 +3132,49 @@ def test_pydantic_hooks() -> None:
 
     MyModel.model_rebuild(force=True)
     assert calls == []
+
+
+def test_pydantic_init_subclass_custom_kwargs() -> None:
+    """https://github.com/pydantic/pydantic/issues/13300"""
+
+    class Event(BaseModel):
+        e_type: str
+
+        @classmethod
+        def __pydantic_init_subclass__(cls, event_type: str | None = None, **kwargs: Any) -> None:
+            super().__pydantic_init_subclass__(**kwargs)
+            cls.event_type = event_type
+
+    class CreatedEvent(Event, event_type='created'):
+        pass
+
+    # `__pydantic_init_subclass__` received the keyword argument, and `__init_subclass__` did not raise:
+    assert CreatedEvent.event_type == 'created'
+
+    class CreatedEventWithDefault(Event):
+        pass
+
+    assert CreatedEventWithDefault.event_type is None
+
+
+def test_pydantic_init_subclass_custom_kwargs_with_config() -> None:
+    """Class kwargs that are also `ConfigDict` keys are still consumed as config.
+
+    See https://github.com/pydantic/pydantic/issues/13300.
+    """
+
+    class Event(BaseModel):
+        @classmethod
+        def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
+            super().__pydantic_init_subclass__(**kwargs)
+            cls.received_kwargs = kwargs
+
+    class CreatedEvent(Event, extra='allow', event_type='created'):
+        pass
+
+    # `extra` is consumed as config, `event_type` is passed to `__pydantic_init_subclass__`:
+    assert CreatedEvent.model_config['extra'] == 'allow'
+    assert CreatedEvent.received_kwargs == {'event_type': 'created'}
 
 
 def test_model_validate_with_context():

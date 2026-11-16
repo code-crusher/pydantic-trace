@@ -912,6 +912,12 @@ class BaseModel(metaclass=_model_construction.ModelMetaclass):
         This will receive the same `kwargs` that would be passed to the standard `__init_subclass__`, namely,
         any kwargs passed to the class definition that aren't used internally by Pydantic.
 
+        To make this method usable as a drop-in replacement for `__init_subclass__`, the class keyword
+        arguments passed in the class definition (e.g. `class MyModel(BaseModel, my_kwarg='value')`) are
+        not passed on to `object.__init_subclass__()` (which would raise a `TypeError`), but are made
+        available here instead. If you want to define a custom `__init_subclass__` method on your model
+        as well, make sure it accepts and forwards `**kwargs` (e.g. `def __init_subclass__(cls, **kwargs): super().__init_subclass__(**kwargs)`).
+
         Args:
             **kwargs: Any keyword arguments passed to the class definition that aren't used internally
                 by Pydantic.
@@ -920,6 +926,50 @@ class BaseModel(metaclass=_model_construction.ModelMetaclass):
             You may want to override [`__pydantic_on_complete__()`][pydantic.main.BaseModel.__pydantic_on_complete__]
             instead, which is called once the class and its fields are fully initialized and ready for validation.
         """
+
+    if TYPE_CHECKING:
+        # We put this `__init_subclass__` signature in a TYPE_CHECKING block so type checkers check the class keyword
+        # arguments against `ConfigDict`, which is what pydantic consumes to set `model_config`. At runtime, the
+        # implementation below (see `__init_subclass__` in the `else` branch) accepts any keyword arguments, so that
+        # custom class keyword arguments (which are meant for `__pydantic_init_subclass__`) don't raise a `TypeError`.
+        @classmethod
+        def __init_subclass__(cls, **kwargs: Unpack[ConfigDict]) -> None:
+            """This signature is included purely to help type-checkers check arguments to class declaration, which
+            provides a way to conveniently set model_config key/value pairs.
+
+            ```python
+            from pydantic import BaseModel
+
+            class MyModel(BaseModel, extra='allow'): ...
+            ```
+
+            Any keyword arguments that aren't keys of `ConfigDict` are not consumed by Pydantic, and are made available
+            to [`__pydantic_init_subclass__()`][pydantic.main.BaseModel.__pydantic_init_subclass__] (which is called
+            with the same keyword arguments). They are accepted at runtime.
+
+            Note:
+                You may want to override `__pydantic_init_subclass__` instead, which behaves similarly but is called
+                *after* the class is fully initialized.
+            """
+    else:
+
+        @classmethod
+        def __init_subclass__(cls, **kwargs: Any) -> None:
+            """Swallow any class keyword arguments that were not consumed by Pydantic, so that
+            `__pydantic_init_subclass__` can act as a drop-in replacement for `__init_subclass__`
+            (see the docs on `__pydantic_init_subclass__`).
+
+            This method is called by `type.__new__` (as part of class creation) before the class is
+            fully initialized, so unlike [`__pydantic_init_subclass__()`][pydantic.main.BaseModel.__pydantic_init_subclass__],
+            it can't access any model-specific attributes yet. It accepts and discards the keyword arguments
+            (the same arguments are passed to `__pydantic_init_subclass__` later, once the class is initialized),
+            and forwards none of them on to the next `__init_subclass__` in the MRO (calling `object.__init_subclass__()`
+            with keyword arguments would raise a `TypeError`).
+
+            Override this method if you want to customize this behavior, taking care to forward any keyword arguments
+            you don't consume to `super().__init_subclass__(**kwargs)`.
+            """
+            super().__init_subclass__()
 
     @classmethod
     def __pydantic_on_complete__(cls) -> None:
@@ -1251,33 +1301,6 @@ class BaseModel(metaclass=_model_construction.ModelMetaclass):
             # other instance is not a BaseModel
             else:
                 return NotImplemented  # delegate to the other item in the comparison
-
-    if TYPE_CHECKING:
-        # We put `__init_subclass__` in a TYPE_CHECKING block because, even though we want the type-checking benefits
-        # described in the signature of `__init_subclass__` below, we don't want to modify the default behavior of
-        # subclass initialization.
-
-        def __init_subclass__(cls, **kwargs: Unpack[ConfigDict]):
-            """This signature is included purely to help type-checkers check arguments to class declaration, which
-            provides a way to conveniently set model_config key/value pairs.
-
-            ```python
-            from pydantic import BaseModel
-
-            class MyModel(BaseModel, extra='allow'): ...
-            ```
-
-            However, this may be deceiving, since the _actual_ calls to `__init_subclass__` will not receive any
-            of the config arguments, and will only receive any keyword arguments passed during class initialization
-            that are _not_ expected keys in ConfigDict. (This is due to the way `ModelMetaclass.__new__` works.)
-
-            Args:
-                **kwargs: Keyword arguments passed to the class definition, which set model_config
-
-            Note:
-                You may want to override `__pydantic_init_subclass__` instead, which behaves similarly but is called
-                *after* the class is fully initialized.
-            """
 
     def __iter__(self) -> TupleGenerator:
         """So `dict(model)` works."""
