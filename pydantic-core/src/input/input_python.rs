@@ -344,9 +344,9 @@ impl<'py> Input<'py> for Bound<'py, PyAny> {
             return Ok(ValidationMatch::exact(self.to_owned().clone()));
         }
 
-        // Check for fraction subclasses
+        // Check for fraction subclasses, and upcast them to `Fraction` (like `Decimal` does)
         if self.is_instance(fraction_type)? {
-            return Ok(ValidationMatch::strict(self.to_owned().clone()));
+            return create_fraction(self, self).map(ValidationMatch::strict);
         }
 
         if !strict {

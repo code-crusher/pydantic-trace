@@ -50,6 +50,26 @@ def test_fraction(input_value, expected):
 
 
 @pytest.mark.parametrize(
+    'input_value',
+    [
+        FractionSubclass('42.0'),
+        FractionSubclass('1/3'),
+        FractionSubclass(-3),
+    ],
+)
+@pytest.mark.parametrize('strict', [True, False])
+def test_fraction_subclasses_are_upcast(input_value: Fraction, strict: bool) -> None:
+    """https://github.com/pydantic/pydantic/issues/13364
+
+    Subclasses of `Fraction` are upcast to the base class, consistently with `Decimal`.
+    """
+    ta = TypeAdapter(Fraction)
+    result = ta.validate_python(input_value, strict=strict)
+    assert type(result) is Fraction
+    assert result == input_value
+
+
+@pytest.mark.parametrize(
     'json_str,expected',
     [
         ('"1/3"', Fraction(1, 3)),
