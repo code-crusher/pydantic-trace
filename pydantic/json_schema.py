@@ -985,7 +985,10 @@ class GenerateJsonSchema:
         result: dict[str, Any] = {'title': enum_type.__name__, 'description': description}
         result = {k: v for k, v in result.items() if v is not None}
 
-        expected = [to_jsonable_python(v.value) for v in schema['members']]
+        if schema.get('use_enum_names'):
+            expected = [v.name for v in schema['members']]
+        else:
+            expected = [to_jsonable_python(v.value) for v in schema['members']]
 
         result['enum'] = expected
 

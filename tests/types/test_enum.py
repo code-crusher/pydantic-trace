@@ -418,3 +418,159 @@ def test_enum_with_namedtuple_values() -> None:
 
     with pytest.raises(ValidationError):
         Model2(value=NT('bar'))
+
+
+def test_use_enum_names() -> None:
+    """https://github.com/pydantic/pydantic/issues/13195"""
+
+    class StateAbbrev(Enum):
+        NY = 'New York'
+        MA = 'Massachusetts'
+
+    class Address(BaseModel):
+        model_config = ConfigDict(use_enum_names=True)
+
+        state: StateAbbrev
+
+    addr = Address(state='NY')
+    assert addr.state is StateAbbrev.NY
+    assert addr.model_dump() == {'state': 'NY'}
+    assert addr.model_dump_json() == '{"state":"NY"}'
+
+    # values are rejected
+    with pytest.raises(ValidationError):
+        Address(state='New York')
+
+    # JSON input validates by name
+    assert Address.model_validate_json('{"state": "MA"}').state is StateAbbrev.MA
+    with pytest.raises(ValidationError):
+        Address.model_validate_json('{"state": "Massachusetts"}')
+
+    # enum member instances are accepted as-is
+    assert Address(state=StateAbbrev.NY).state is StateAbbrev.NY
+
+    # json schema advertises the member names
+    schema = Address.model_json_schema()
+    assert schema['$defs']['StateAbbrev']['enum'] == ['NY', 'MA']
+
+
+def test_use_enum_names_int_enum() -> None:
+    """https://github.com/pydantic/pydantic/issues/13195"""
+
+    class Priority(IntEnum):
+        LOW = 1
+        MEDIUM = 2
+        HIGH = 3
+
+    class Task(BaseModel):
+        model_config = ConfigDict(use_enum_names=True)
+
+        priority: Priority
+
+    task = Task(priority='HIGH')
+    assert task.priority is Priority.HIGH
+    assert task.model_dump() == {'priority': 'HIGH'}
+    assert task.model_dump_json() == '{"priority":"HIGH"}'
+
+    with pytest.raises(ValidationError):
+        Task(priority=3)
+    with pytest.raises(ValidationError):
+        Task(priority='3')
+
+    schema = Task.model_json_schema()
+    assert schema['$defs']['Priority']['enum'] == ['LOW', 'MEDIUM', 'HIGH']
+    assert schema['$defs']['Priority']['type'] == 'string'
+
+
+def test_use_enum_names_str_enum() -> None:
+    """https://github.com/pydantic/pydantic/issues/13195"""
+
+    class Color(StrEnum):
+        RED = 'red_value'
+        GREEN = 'green_value'
+
+    class Model(BaseModel):
+        model_config = ConfigDict(use_enum_names=True)
+
+        color: Color
+
+    m = Model(color='RED')
+    assert m.color is Color.RED
+    assert m.model_dump() == {'color': 'RED'}
+    assert m.model_dump_json() == '{"color":"RED"}'
+
+    with pytest.raises(ValidationError):
+        Model(color='red_value')
+
+
+def test_use_enum_names_plain_enum_tuple_values() -> None:
+    """https://github.com/pydantic/pydantic/issues/13195"""
+
+    class Multi(Enum):
+        A = ('a', 1)
+        B = ('b', 2)
+
+    class Model(BaseModel):
+        model_config = ConfigDict(use_enum_names=True)
+
+        x: Multi
+
+    assert Model(x='A').x is Multi.A
+    assert Model(x='A').model_dump() == {'x': 'A'}
+    with pytest.raises(ValidationError):
+        Model(x=('a', 1))
+
+
+def test_use_enum_names_with_use_enum_values() -> None:
+    """https://github.com/pydantic/pydantic/issues/13195"""
+
+    class StateAbbrev(Enum):
+        NY = 'New York'
+        MA = 'Massachusetts'
+
+    class Address(BaseModel):
+        model_config = ConfigDict(use_enum_names=True, use_enum_values=True)
+
+        state: StateAbbrev
+
+    addr = Address(state='NY')
+    # validation happens by name; the value is extracted as per use_enum_values
+    assert addr.state == 'New York'
+    assert addr.model_dump() == {'state': 'New York'}
+
+
+def test_use_enum_names_dict_keys() -> None:
+    """https://github.com/pydantic/pydantic/issues/13195"""
+
+    class Priority(IntEnum):
+        LOW = 1
+        HIGH = 2
+
+    class Model(BaseModel):
+        model_config = ConfigDict(use_enum_names=True)
+
+        mapping: dict[Priority, str]
+
+    m = Model(mapping={Priority.LOW: 'low'})
+    assert m.model_dump() == {'mapping': {'LOW': 'low'}}
+    assert m.model_dump_json() == '{"mapping":{"LOW":"low"}}'
+
+
+def test_use_enum_names_default() -> None:
+    """https://github.com/pydantic/pydantic/issues/13195"""
+
+    class StateAbbrev(Enum):
+        NY = 'New York'
+        MA = 'Massachusetts'
+
+    class Address(BaseModel):
+        state: StateAbbrev
+
+    # default behavior unchanged: values are used
+    addr = Address(state='New York')
+    assert addr.state is StateAbbrev.NY
+    assert addr.model_dump() == {'state': StateAbbrev.NY}
+    assert addr.model_dump_json() == '{"state":"New York"}'
+
+    with pytest.raises(ValidationError):
+        Address(state='NY')

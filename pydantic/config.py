@@ -216,6 +216,45 @@ class ConfigDict(TypedDict, total=False):
         3. The model is populated by the attribute name `'my_field'`.
     """
 
+    use_enum_names: bool
+    """
+    Whether to validate and serialize enums using the enum member [`name`][enum.Enum.name]
+    instead of the [`value`][enum.Enum.value]. Defaults to `False`.
+
+    This is useful when enum names act as codes and values are human-readable descriptions,
+    or when interoperating with systems (e.g. SQLAlchemy) that store enum member names.
+
+    ```python
+    from enum import Enum
+
+    from pydantic import BaseModel, ConfigDict
+
+    class StateAbbrev(Enum):
+        NY = 'New York'
+        MA = 'Massachusetts'
+
+    class Address(BaseModel):
+        model_config = ConfigDict(use_enum_names=True)
+
+        state: StateAbbrev
+
+    addr = Address(state='NY')
+    print(addr.state)
+    #> StateAbbrev.NY
+    print(addr.model_dump())
+    #> {'state': 'NY'}
+    ```
+
+    When enabled, the JSON schema for enums lists the member names (as strings) instead of the values.
+
+    The stored model attribute remains the enum member itself (as usual). If you also set
+    [`use_enum_values`][pydantic.ConfigDict.use_enum_values], the stored value is the member
+    [`value`][enum.Enum.value] instead.
+
+    /// version-added | v2.15
+    ///
+    """
+
     use_enum_values: bool
     """
     Whether to populate models with the [`value`][enum.Enum.value] property of enums, rather than the raw enum.

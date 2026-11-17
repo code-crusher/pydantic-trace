@@ -34,10 +34,11 @@ impl BuildValidator for BuildEnumValidator {
         }
 
         let py = schema.py();
-        let value_str = intern!(py, "value");
+        let use_enum_names: bool = schema.get_as(intern!(py, "use_enum_names"))?.unwrap_or(false);
+        let attr_str = if use_enum_names { intern!(py, "name") } else { intern!(py, "value") };
         let expected: Vec<(Bound<'_, PyAny>, Py<PyAny>)> = members
             .iter()
-            .map(|v| Ok((v.getattr(value_str)?, v.into())))
+            .map(|v| Ok((v.getattr(attr_str)?, v.into())))
             .collect::<PyResult<_>>()?;
 
         let repr_args: Vec<_> = expected.iter().map(|(k, _)| k.repr()).collect::<PyResult<_>>()?;
@@ -57,6 +58,7 @@ impl BuildValidator for BuildEnumValidator {
                     expected_repr,
                     strict: is_strict(schema, config)?,
                     class_repr: class_repr.clone(),
+                    use_enum_names,
                     name: format!("{}[{class_repr}]", $name_prefix),
                 }
             };
@@ -90,6 +92,7 @@ pub struct EnumValidator<T: EnumValidateValue> {
     expected_repr: String,
     strict: bool,
     class_repr: String,
+    use_enum_names: bool,
     name: String,
 }
 
@@ -117,6 +120,19 @@ impl<T: EnumValidateValue> Validator for EnumValidator<T> {
         }
 
         state.floor_exactness(Exactness::Lax);
+
+        if self.use_enum_names {
+            return match self.lookup.validate_str(input, strict)? {
+                Some(v) => Ok(v.clone_ref(py)),
+                None => Err(ValError::new(
+                    ErrorType::Enum {
+                        expected: self.expected_repr.clone(),
+                        context: None,
+                    },
+                    input,
+                )),
+            };
+        }
 
         if let Some(v) = T::validate_value(py, input, &self.lookup, strict)? {
             return Ok(v);

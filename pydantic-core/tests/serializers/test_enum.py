@@ -133,3 +133,46 @@ def test_int_dict_key():
         match=r"Expected `enum` - serialized value may not be as expected \[input_value='x', input_type=str\]",
     ):
         assert v.to_json({'x': 'x'}) == b'{"x":"x"}'
+
+
+def test_enum_use_enum_names():
+    class MyEnum(Enum):
+        a = 1
+        b = 2
+
+    v = SchemaSerializer(core_schema.enum_schema(MyEnum, list(MyEnum.__members__.values()), use_enum_names=True))
+
+    # python mode serializes to the member name
+    assert v.to_python(MyEnum.a) == 'a'
+    assert v.to_python(MyEnum.a, mode='json') == 'a'
+    assert v.to_json(MyEnum.a) == b'"a"'
+
+
+def test_int_enum_use_enum_names():
+    class MyEnum(int, Enum):
+        a = 1
+        b = 2
+
+    v = SchemaSerializer(
+        core_schema.enum_schema(MyEnum, list(MyEnum.__members__.values()), sub_type='int', use_enum_names=True)
+    )
+
+    assert v.to_python(MyEnum.a) == 'a'
+    assert v.to_python(MyEnum.a, mode='json') == 'a'
+    assert v.to_json(MyEnum.a) == b'"a"'
+
+
+def test_enum_use_enum_names_dict_key():
+    class MyEnum(Enum):
+        a = 1
+        b = 2
+
+    v = SchemaSerializer(
+        core_schema.dict_schema(
+            core_schema.enum_schema(MyEnum, list(MyEnum.__members__.values()), use_enum_names=True),
+            core_schema.str_schema(),
+        )
+    )
+
+    assert v.to_python({MyEnum.a: 'x'}, mode='json') == {'a': 'x'}
+    assert v.to_json({MyEnum.a: 'x'}) == b'{"a":"x"}'

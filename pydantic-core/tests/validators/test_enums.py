@@ -506,3 +506,55 @@ def test_strict_enum_wrap_json() -> None:
 
     assert v.validate_python(Animal.CAT) == Animal.CAT
     assert v.validate_json('"dog"') == Animal.DOG
+
+
+def test_enum_use_enum_names():
+    class MyEnum(Enum):
+        a = 'A value'
+        b = 'B value'
+
+    v = SchemaValidator(core_schema.enum_schema(MyEnum, list(MyEnum.__members__.values()), use_enum_names=True))
+
+    assert v.validate_python('a') is MyEnum.a
+    assert v.validate_python('b') is MyEnum.b
+    assert v.validate_python(MyEnum.a) is MyEnum.a
+
+    with pytest.raises(ValidationError, match=r"Input should be 'a' or 'b'"):
+        v.validate_python('A value')
+
+    with pytest.raises(ValidationError):
+        v.validate_python('A')
+
+    assert v.validate_json('"a"') is MyEnum.a
+    with pytest.raises(ValidationError):
+        v.validate_json('"A value"')
+
+
+def test_int_enum_use_enum_names():
+    class MyEnum(int, Enum):
+        a = 1
+        b = 2
+
+    v = SchemaValidator(
+        core_schema.enum_schema(MyEnum, list(MyEnum.__members__.values()), sub_type='int', use_enum_names=True)
+    )
+
+    assert v.validate_python('a') is MyEnum.a
+    assert v.validate_json('"b"') is MyEnum.b
+
+    with pytest.raises(ValidationError):
+        v.validate_python(1)
+    with pytest.raises(ValidationError):
+        v.validate_python('1')
+    with pytest.raises(ValidationError):
+        v.validate_json('1')
+
+    # strict mode only allows enum instances
+    v_strict = SchemaValidator(
+        core_schema.enum_schema(
+            MyEnum, list(MyEnum.__members__.values()), sub_type='int', use_enum_names=True, strict=True
+        )
+    )
+    assert v_strict.validate_python(MyEnum.a) is MyEnum.a
+    with pytest.raises(ValidationError):
+        v_strict.validate_python('a')

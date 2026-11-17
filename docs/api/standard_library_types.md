@@ -745,14 +745,44 @@ Standard library type: [`enum.Enum`][].
 * If an [`enum.Enum`][] subclass is used as a type, any enum member or value that correspond to the
   enum members [values][enum.Enum.value] is validated as-is.
 
+The [`use_enum_names`][pydantic.ConfigDict.use_enum_names] configuration value can be set to
+validate (and serialize) using the enum member [`name`][enum.Enum.name] instead of its [value][enum.Enum.value]:
+
+```python
+from enum import Enum
+
+from pydantic import BaseModel, ConfigDict
+
+
+class StateAbbrev(Enum):
+    NY = 'New York'
+    MA = 'Massachusetts'
+
+
+class Address(BaseModel):
+    model_config = ConfigDict(use_enum_names=True)
+
+    state: StateAbbrev
+
+
+addr = Address(state='NY')
+print(addr.state)
+#> StateAbbrev.NY
+print(addr.model_dump())
+#> {'state': 'NY'}
+```
+
 <h3>Serialization</h3>
 
 In [Python mode](../concepts/serialization.md#python-mode), enum instances are serialized as is.
 The [`use_enum_values`][pydantic.ConfigDict.use_enum_values] configuration value can be set to
 use the enum [value][enum.Enum.value] during validation (so that it is also used during serialization).
+The [`use_enum_names`][pydantic.ConfigDict.use_enum_names] configuration value can be set to
+use the enum member [`name`][enum.Enum.name] instead.
 
 In [JSON mode](../concepts/serialization.md#json-mode), enum instances are serialized using
-their [value][enum.Enum.value].
+their [value][enum.Enum.value] (or their [`name`][enum.Enum.name] when
+[`use_enum_names`][pydantic.ConfigDict.use_enum_names] is set).
 
 <h3>Example</h3>
 

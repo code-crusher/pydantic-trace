@@ -560,6 +560,7 @@ class GenerateSchema:
                 enum_type,
                 cases,
                 sub_type=sub_type,
+                use_enum_names=self._config_wrapper.use_enum_names or None,
                 ref=enum_ref,
                 metadata={'pydantic_js_functions': [get_json_schema]},
             )
