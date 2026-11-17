@@ -946,6 +946,7 @@ class GenerateSchema:
                         metadata=metadata,
                     )
                 else:
+                    sequence_root_indices = _sequence_root_indices(field.validation_alias for field in fields.values())
                     fields_schema: core_schema.CoreSchema = core_schema.model_fields_schema(
                         {k: self._generate_md_field_schema(k, v, decorators) for k, v in fields.items()},
                         computed_fields=[
@@ -956,6 +957,7 @@ class GenerateSchema:
                         extras_keys_schema=extras_keys_schema,
                         model_name=cls.__name__,
                     )
+                    fields_schema = _apply_sequence_root_index_support(fields_schema, sequence_root_indices)
                     inner_schema = apply_model_validators(fields_schema, model_validators, 'inner')
 
                     model_schema = core_schema.model_schema(
@@ -1462,6 +1464,7 @@ class GenerateSchema:
                     raise PydanticUndefinedAnnotation.from_name_error(e) from e
 
                 readonly_fields: list[str] = []
+                validation_aliases: list[str | AliasChoices | AliasPath | None] = []
 
                 for field_name, annotation in annotations.items():
                     field_info = FieldInfo.from_annotation(annotation, _source=AnnotationSource.TYPED_DICT)
@@ -1480,6 +1483,7 @@ class GenerateSchema:
                     ):
                         field_info.description = field_docstrings[field_name]
                     update_field_from_config(self._config_wrapper, field_name, field_info)
+                    validation_aliases.append(field_info.validation_alias)
 
                     fields[field_name] = self._generate_td_field_schema(
                         field_name, field_info, decorators, required=required
@@ -1541,6 +1545,7 @@ class GenerateSchema:
                     ref=typed_dict_ref,
                     config=core_config,
                 )
+                td_schema = _apply_sequence_root_index_support(td_schema, _sequence_root_indices(validation_aliases))
 
                 schema = self._apply_model_serializers(td_schema, decorators.model_serializers.values())
                 schema = apply_model_validators(schema, decorators.model_validators.values(), 'all')
@@ -1952,6 +1957,7 @@ class GenerateSchema:
                 if decorators is None:
                     decorators = DecoratorInfos.build(dataclass, replace_wrapped_methods=False)
                     decorators.update_from_config(self._config_wrapper)
+                sequence_root_indices = _sequence_root_indices(field.validation_alias for field in fields.values())
                 # Move kw_only=False args to the start of the list, as this is how vanilla dataclasses work.
                 # Note that when kw_only is missing or None, it is treated as equivalent to kw_only=True
                 args = sorted(
@@ -1970,6 +1976,7 @@ class GenerateSchema:
                     ],
                     collect_init_only=has_post_init,
                 )
+                args_schema = _apply_sequence_root_index_support(args_schema, sequence_root_indices)
 
                 model_validators = decorators.model_validators.values()
                 inner_schema = apply_model_validators(args_schema, model_validators, 'inner')
@@ -2572,10 +2579,86 @@ class GenerateSchema:
 def _convert_to_aliases(
     alias: str | AliasChoices | AliasPath | None,
 ) -> str | list[str | int] | list[list[str | int]] | None:
-    if isinstance(alias, (AliasChoices, AliasPath)):
-        return alias.convert_to_aliases()
-    else:
-        return alias
+    """Convert an alias to the representation expected by `pydantic-core`.
+
+    Integer first segments are converted to strings, as `pydantic-core` requires alias paths to
+    start with a string key. For models, dataclasses and typed dictionaries, such paths index into
+    a top-level list or tuple input, see [`_apply_sequence_root_index_support`][].
+    """
+    if isinstance(alias, AliasPath):
+        return _stringify_int_first_segment(alias.convert_to_aliases())
+    if isinstance(alias, AliasChoices):
+        return [_stringify_int_first_segment(path) for path in alias.convert_to_aliases()]
+    return alias
+
+
+def _stringify_int_first_segment(path: list[str | int]) -> list[str | int]:
+    """Convert an integer first segment of an alias path to a string.
+
+    Pydantic-core requires alias paths to start with a string key. A path starting with an integer
+    indexes into the top-level input instead, which is handled by converting sequences to mappings
+    keyed by the stringified indices, see [`_sequence_root_to_index_mapping`][].
+    """
+    if path and isinstance(path[0], int):
+        return [str(path[0]), *path[1:]]
+    return path
+
+
+def _int_first_segments(alias: str | AliasChoices | AliasPath | None) -> set[int]:
+    """The integer first segments of the alias, i.e. the indices into the top-level input."""
+    if isinstance(alias, AliasPath):
+        return {alias.path[0]} if alias.path and isinstance(alias.path[0], int) else set()
+    if isinstance(alias, AliasChoices):
+        segments: set[int] = set()
+        for choice in alias.choices:
+            if isinstance(choice, AliasPath) and choice.path and isinstance(choice.path[0], int):
+                segments.add(choice.path[0])
+        return segments
+    return set()
+
+
+def _sequence_root_indices(aliases: Iterable[str | AliasChoices | AliasPath | None]) -> frozenset[int]:
+    """The indices into the top-level input referenced by the aliases."""
+    indices: set[int] = set()
+    for alias in aliases:
+        indices.update(_int_first_segments(alias))
+    return frozenset(indices)
+
+
+def _sequence_root_to_index_mapping(value: Any, indices: frozenset[int]) -> Any:
+    """Convert a top-level list or tuple to a mapping keyed by the stringified indices.
+
+    Only the indices referenced by the aliases are included, and both positive and negative
+    indices are supported, so that `AliasPath(0)` and `AliasPath(-1)` can be used to index into
+    the input of a model (or dataclass, typed dictionary) directly.
+    """
+    if not isinstance(value, (list, tuple)):
+        return value
+
+    length = len(value)
+    mapping: dict[str, Any] = {}
+    for index in indices:
+        position = index if index >= 0 else length + index
+        if 0 <= position < length:
+            mapping[str(index)] = value[position]
+    return mapping
+
+
+def _apply_sequence_root_index_support(
+    schema: core_schema.CoreSchema, indices: frozenset[int]
+) -> core_schema.CoreSchema:
+    """Wrap `schema` so that aliases can index into a top-level list or tuple input."""
+    if not indices:
+        return schema
+
+    convert = partial(_sequence_root_to_index_mapping, indices=indices)
+    convert.__name__ = _sequence_root_to_index_mapping.__name__  # type: ignore
+
+    ref = schema.pop('ref', None)  # type: ignore
+    wrapped = core_schema.no_info_before_validator_function(convert, schema)
+    if ref:
+        wrapped['ref'] = ref  # type: ignore
+    return wrapped
 
 
 def apply_model_validators(

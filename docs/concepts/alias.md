@@ -97,6 +97,42 @@ print(user)
 #> first_name='John' last_name='Doe'
 ```
 
+### Indexing top-level sequences
+
+If the input is a list or tuple rather than a mapping, an `AliasPath` can start with an integer to index
+into the input directly. This is useful when validating records that are serialized as positional sequences:
+
+```python {lint="skip"}
+from pydantic import AliasPath, BaseModel, Field
+
+
+class User(BaseModel):
+    first_name: str = Field(validation_alias=AliasPath(0))
+    last_name: str = Field(validation_alias=AliasPath(1))
+
+
+user = User.model_validate(['John', 'Doe'])
+print(user)
+#> first_name='John' last_name='Doe'
+```
+
+Negative indices are supported as well, and count from the end of the sequence. Mapping inputs still work,
+in which case the integer segments are matched against the stringified keys:
+
+```python {lint="skip"}
+from pydantic import AliasPath, BaseModel, Field
+
+
+class User(BaseModel):
+    first_name: str = Field(validation_alias=AliasPath(0))
+    last_name: str = Field(validation_alias=AliasPath(1))
+
+
+user = User.model_validate({'0': 'John', '1': 'Doe'})
+print(user)
+#> first_name='John' last_name='Doe'
+```
+
 ## Using alias generators
 
 You can use the `alias_generator` parameter of [`Config`][pydantic.config.ConfigDict.alias_generator] to specify

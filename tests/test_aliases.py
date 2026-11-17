@@ -1,7 +1,7 @@
 from contextlib import AbstractContextManager
 from contextlib import nullcontext as does_not_raise
 from inspect import signature
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
 from dirty_equals import IsStr
@@ -15,6 +15,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PydanticUserError,
+    TypeAdapter,
     ValidationError,
     computed_field,
 )
@@ -610,6 +611,113 @@ def test_search_dict_for_alias_path():
     ap = AliasPath('a', 1)
     assert ap.search_dict_for_path({'a': ['hello', 'world']}) == 'world'
     assert ap.search_dict_for_path({'a': 'hello'}) is PydanticUndefined
+
+
+def test_search_sequence_for_alias_path():
+    ap = AliasPath(1)
+    assert ap.search_dict_for_path(['hello', 'world']) == 'world'
+    assert ap.search_dict_for_path(('hello', 'world')) == 'world'
+    assert ap.search_dict_for_path(['hello']) is PydanticUndefined
+
+
+def test_validation_alias_path_with_root_list_index():
+    """https://github.com/pydantic/pydantic/issues/13112"""
+
+    class Model(BaseModel):
+        id: int = Field(validation_alias=AliasPath(0))
+        name: str = Field(validation_alias=AliasPath(1))
+        email: str = Field(validation_alias=AliasPath(2))
+
+    data = [42, 'alice', 'a@example.com']
+    expected = {'id': 42, 'name': 'alice', 'email': 'a@example.com'}
+
+    assert Model.model_validate(data).model_dump() == expected
+    assert Model.model_validate(tuple(data)).model_dump() == expected
+    assert Model.model_validate_json('[42, "alice", "a@example.com"]').model_dump() == expected
+
+
+def test_validation_alias_path_with_root_list_index_container(container_class, py_and_json):
+    """https://github.com/pydantic/pydantic/issues/13112"""
+
+    class Model(container_class):
+        id: Annotated[int, Field(validation_alias=AliasPath(0))]
+        name: Annotated[str, Field(validation_alias=AliasPath(1))]
+
+    adapter = py_and_json(Model)
+    m = adapter.validate_test([42, 'alice'])
+    assert TypeAdapter(Model).dump_python(m) == {'id': 42, 'name': 'alice'}
+
+
+def test_validation_alias_path_with_sparse_root_list_index():
+    """https://github.com/pydantic/pydantic/issues/13112"""
+
+    class Model(BaseModel):
+        id: int = Field(validation_alias=AliasPath(0))
+        status: str = Field(validation_alias=AliasPath(7))
+
+    data = [1, None, None, None, None, None, None, 'active']
+    assert Model.model_validate(data).model_dump() == {'id': 1, 'status': 'active'}
+    assert Model.model_validate_json('[1, null, null, null, null, null, null, "active"]').model_dump() == {
+        'id': 1,
+        'status': 'active',
+    }
+
+
+def test_validation_alias_path_with_negative_root_list_index():
+    class Model(BaseModel):
+        first: str = Field(validation_alias=AliasPath(0))
+        last: str = Field(validation_alias=AliasPath(-1))
+
+    data = ['a', 'b', 'c']
+    assert Model.model_validate(data).model_dump() == {'first': 'a', 'last': 'c'}
+    assert Model.model_validate_json('["a", "b", "c"]').model_dump() == {'first': 'a', 'last': 'c'}
+
+
+def test_validation_alias_choices_with_root_list_index():
+    class Model(BaseModel):
+        x: int = Field(validation_alias=AliasChoices('x', AliasPath(0)))
+        y: int = Field(validation_alias=AliasChoices(AliasPath(1), 'y'))
+
+    assert Model.model_validate({'x': 1, 'y': 2}).model_dump() == {'x': 1, 'y': 2}
+    assert Model.model_validate([3, 4]).model_dump() == {'x': 3, 'y': 4}
+    assert Model.model_validate_json('[3, 4]').model_dump() == {'x': 3, 'y': 4}
+
+
+def test_validation_alias_path_with_root_list_index_error():
+    class Model(BaseModel):
+        id: int = Field(validation_alias=AliasPath(0))
+        name: str = Field(validation_alias=AliasPath(1))
+
+    with pytest.raises(ValidationError) as exc_info:
+        Model.model_validate([1])
+
+    assert exc_info.value.errors(include_url=False) == [
+        {'type': 'missing', 'loc': ('1',), 'msg': 'Field required', 'input': {'0': 1}}
+    ]
+
+
+def test_validation_alias_path_with_root_list_index_extra():
+    class Model(BaseModel):
+        model_config = ConfigDict(extra='allow')
+
+        id: int = Field(validation_alias=AliasPath(0))
+
+    m = Model.model_validate([1, 2])
+    assert m.id == 1
+    # only the indices referenced by the aliases are mapped, so nothing is considered extra
+    assert m.__pydantic_extra__ == {}
+
+
+def test_validation_alias_path_with_root_list_index_json_schema():
+    class Model(BaseModel):
+        id: int = Field(validation_alias=AliasPath(0))
+
+    assert Model.model_json_schema() == {
+        'title': 'Model',
+        'type': 'object',
+        'properties': {'id': {'title': 'Id', 'type': 'integer'}},
+        'required': ['id'],
+    }
 
 
 def test_validation_alias_invalid_value_type():
