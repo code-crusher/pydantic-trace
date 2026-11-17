@@ -41,7 +41,13 @@ pub(crate) fn infer_to_python<'py>(
     value: &Bound<'py, PyAny>,
     state: &mut SerializationState<'py>,
 ) -> PyResult<Py<PyAny>> {
-    infer_to_python_known(state.extra.ob_type_lookup.get_type(value), value, state)
+    let ob_type = state.extra.ob_type_lookup.get_type(value);
+    if matches!(ob_type, ObType::Datetime | ObType::Date | ObType::Time | ObType::Timedelta)
+        && state.extra.fallback.is_some()
+    {
+        return infer_to_python_fallback(value, state);
+    }
+    infer_to_python_known(ob_type, value, state)
 }
 
 /// Whether values of this type can't contain other values, and so can't be part of a reference cycle
@@ -53,6 +59,20 @@ fn is_leaf(ob_type: ObType) -> bool {
 // arbitrary ids to identify that we recursed through infer_to_{python,json}_known
 // We just need them to be different from definition ref slot ids, which start at 0
 const INFER_DEF_REF_ID: usize = usize::MAX;
+
+/// Invoke the `fallback` function and serialize its result, when one is configured.
+///
+/// Marked `#[inline(never)]` to keep the stack frame of the large `infer_to_python_known` match
+/// function small: inlining this (and the equivalent `serde_serialize`/json-key helpers) pushes the
+/// recursion-heavy fallback cycles over the stack limit in debug builds.
+#[inline(never)]
+fn infer_to_python_fallback<'py>(
+    value: &Bound<'py, PyAny>,
+    state: &mut SerializationState<'py>,
+) -> PyResult<Py<PyAny>> {
+    let next_value = state.extra.fallback.as_ref().expect("fallback").call1((value,))?;
+    infer_to_python(&next_value, state)
+}
 
 pub(crate) fn infer_to_python_known<'py>(
     ob_type: ObType,
@@ -354,6 +374,19 @@ pub(crate) fn infer_serialize<'py, S: Serializer>(
     infer_serialize_known(state.extra.ob_type_lookup.get_type(value), value, serializer, state)
 }
 
+/// Invoke the `fallback` function and serialize its result, when one is configured.
+///
+/// See [`infer_to_python_fallback`] for why this is marked `#[inline(never)]`.
+#[inline(never)]
+fn infer_serialize_fallback<'py, S: Serializer>(
+    value: &Bound<'py, PyAny>,
+    serializer: S,
+    state: &mut SerializationState<'py>,
+) -> Result<S::Ok, S::Error> {
+    let next_value = state.extra.fallback.as_ref().expect("fallback").call1((value,)).map_err(py_err_se_err)?;
+    infer_serialize(&next_value, serializer, state)
+}
+
 pub(crate) fn infer_serialize_known<'py, S: Serializer>(
     ob_type: ObType,
     value: &Bound<'py, PyAny>,
@@ -492,23 +525,39 @@ fn infer_serialize_known_unguarded<'py, S: Serializer>(
             value.try_iter().map_err(py_err_se_err)?
         ),
         ObType::Datetime => {
-            let py_datetime = value.cast().map_err(py_err_se_err)?;
-            state.config.temporal_mode.datetime_serialize(py_datetime, serializer)
+            if state.extra.fallback.is_some() {
+                infer_serialize_fallback(value, serializer, state)
+            } else {
+                let py_datetime = value.cast().map_err(py_err_se_err)?;
+                state.config.temporal_mode.datetime_serialize(py_datetime, serializer)
+            }
         }
         ObType::Date => {
-            let py_date = value.cast().map_err(py_err_se_err)?;
-            state.config.temporal_mode.date_serialize(py_date, serializer)
+            if state.extra.fallback.is_some() {
+                infer_serialize_fallback(value, serializer, state)
+            } else {
+                let py_date = value.cast().map_err(py_err_se_err)?;
+                state.config.temporal_mode.date_serialize(py_date, serializer)
+            }
         }
         ObType::Time => {
-            let py_time = value.cast().map_err(py_err_se_err)?;
-            state.config.temporal_mode.time_serialize(py_time, serializer)
+            if state.extra.fallback.is_some() {
+                infer_serialize_fallback(value, serializer, state)
+            } else {
+                let py_time = value.cast().map_err(py_err_se_err)?;
+                state.config.temporal_mode.time_serialize(py_time, serializer)
+            }
         }
         ObType::Timedelta => {
-            let either_delta = EitherTimedelta::try_from(value).map_err(py_err_se_err)?;
-            state
-                .config
-                .timedelta_mode
-                .timedelta_serialize(either_delta, serializer)
+            if state.extra.fallback.is_some() {
+                infer_serialize_fallback(value, serializer, state)
+            } else {
+                let either_delta = EitherTimedelta::try_from(value).map_err(py_err_se_err)?;
+                state
+                    .config
+                    .timedelta_mode
+                    .timedelta_serialize(either_delta, serializer)
+            }
         }
         ObType::Url
         | ObType::MultiHostUrl
@@ -591,6 +640,18 @@ pub(crate) fn infer_json_key<'a, 'py>(
     infer_json_key_known(ob_type, key, state)
 }
 
+/// Invoke the `fallback` function on a JSON object key and serialize its result, when one is configured.
+///
+/// See [`infer_to_python_fallback`] for why this is marked `#[inline(never)]`.
+#[inline(never)]
+fn infer_json_key_fallback<'a, 'py>(
+    key: &'a Bound<'py, PyAny>,
+    state: &mut SerializationState<'py>,
+) -> PyResult<Cow<'a, str>> {
+    let next_key = state.extra.fallback.as_ref().expect("fallback").call1((key,))?;
+    infer_json_key(&next_key, state).map(|cow| Cow::Owned(cow.into_owned()))
+}
+
 pub(crate) fn infer_json_key_known<'a, 'py>(
     ob_type: ObType,
     key: &'a Bound<'py, PyAny>,
@@ -626,16 +687,38 @@ pub(crate) fn infer_json_key_known<'a, 'py>(
             })
             .map(|cow| Cow::Owned(cow.into_owned()))
         }
-        ObType::Datetime => state.config.temporal_mode.datetime_json_key(key.cast()?),
-        ObType::Date => state.config.temporal_mode.date_json_key(key.cast()?),
-        ObType::Time => state.config.temporal_mode.time_json_key(key.cast()?),
+        ObType::Datetime => {
+            if state.extra.fallback.is_some() {
+                infer_json_key_fallback(key, state)
+            } else {
+                state.config.temporal_mode.datetime_json_key(key.cast()?)
+            }
+        }
+        ObType::Date => {
+            if state.extra.fallback.is_some() {
+                infer_json_key_fallback(key, state)
+            } else {
+                state.config.temporal_mode.date_json_key(key.cast()?)
+            }
+        }
+        ObType::Time => {
+            if state.extra.fallback.is_some() {
+                infer_json_key_fallback(key, state)
+            } else {
+                state.config.temporal_mode.time_json_key(key.cast()?)
+            }
+        }
         ObType::Uuid => {
             let uuid = super::type_serializers::uuid::uuid_to_string(key)?;
             Ok(Cow::Owned(uuid))
         }
         ObType::Timedelta => {
-            let either_delta = EitherTimedelta::try_from(key)?;
-            state.config.timedelta_mode.timedelta_json_key(&either_delta)
+            if state.extra.fallback.is_some() {
+                infer_json_key_fallback(key, state)
+            } else {
+                let either_delta = EitherTimedelta::try_from(key)?;
+                state.config.timedelta_mode.timedelta_json_key(&either_delta)
+            }
         }
         ObType::Url
         | ObType::MultiHostUrl

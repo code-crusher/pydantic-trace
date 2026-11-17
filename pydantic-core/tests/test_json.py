@@ -1,4 +1,5 @@
 import platform
+from datetime import date, datetime, time, timedelta
 
 import pytest
 from dirty_equals import IsList
@@ -62,6 +63,31 @@ def test_to_jsonable_python_fallback():
     assert to_jsonable_python(Foobar(), serialize_unknown=True) == 'Foobar.__str__'
     assert to_jsonable_python(Foobar(), serialize_unknown=True, fallback=fallback_func) == 'fallback:Foobar'
     assert to_jsonable_python(Foobar(), fallback=fallback_func) == 'fallback:Foobar'
+
+
+def test_to_json_temporal_fallback():
+    """https://github.com/pydantic/pydantic/issues/13169"""
+
+    def custom(value):
+        return f'custom:{value.isoformat()}'
+
+    dt = datetime(2022, 12, 2, 12, 13, 14)
+    assert to_json(dt) == b'"2022-12-02T12:13:14"'
+    assert to_json(dt, fallback=custom) == b'"custom:2022-12-02T12:13:14"'
+    assert to_json({'x': dt}, fallback=custom) == b'{"x":"custom:2022-12-02T12:13:14"}'
+    assert to_json([dt], fallback=custom) == b'["custom:2022-12-02T12:13:14"]'
+    assert to_json({dt: 1}, fallback=custom) == b'{"custom:2022-12-02T12:13:14":1}'
+
+    d = date(2022, 12, 2)
+    assert to_json(d, fallback=custom) == b'"custom:2022-12-02"'
+
+    t = time(12, 13, 14)
+    assert to_json(t, fallback=custom) == b'"custom:12:13:14"'
+
+    assert to_json(timedelta(days=1), fallback=str) == b'"1 day, 0:00:00"'
+
+    assert to_jsonable_python(dt, fallback=custom) == 'custom:2022-12-02T12:13:14'
+    assert to_jsonable_python({'x': dt}, fallback=custom) == {'x': 'custom:2022-12-02T12:13:14'}
 
 
 def test_to_jsonable_python_schema_serializer():
