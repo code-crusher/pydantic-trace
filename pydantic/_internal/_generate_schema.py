@@ -37,6 +37,9 @@ from typing import (
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+if sys.version_info >= (3, 14):
+    from string.templatelib import Template
+
 import typing_extensions
 from pydantic_core import (
     MISSING,
@@ -159,6 +162,9 @@ _SIMPLE_SCHEMA_TYPES: frozenset[type[Any]] = frozenset(
     }
 )
 """Exact types handled directly, without checking for `__get_pydantic_core_schema__()`/`__get_pydantic_json_schema__()` methods."""
+if sys.version_info >= (3, 14):
+    # `string.templatelib.Template` was added in Python 3.14
+    _SIMPLE_SCHEMA_TYPES = _SIMPLE_SCHEMA_TYPES | frozenset({Template})
 
 
 def _is_simple_schema_type(obj: Any) -> bool:
@@ -473,6 +479,10 @@ class GenerateSchema:
         re.Pattern: lambda self, obj: self._pattern_schema(obj),
         collections.abc.Callable: _copy_schema_handler(_CALLABLE_SCHEMA),
     }
+
+    if sys.version_info >= (3, 14):
+        _handlers[Template] = lambda self, obj: self._template_schema()
+        _generic_handlers[Template] = lambda self, obj: self._template_schema()
 
     if sys.version_info >= (3, 15):
         _handlers[frozendict] = lambda self, obj: self._frozendict_schema(Any, Any)
@@ -1758,6 +1768,15 @@ class GenerateSchema:
         metadata = {'pydantic_js_functions': [lambda _1, _2: {'type': 'string', 'format': 'zoneinfo'}]}
         return core_schema.no_info_plain_validator_function(
             validate_str_is_valid_iana_tz,
+            serialization=core_schema.to_string_ser_schema(),
+            metadata=metadata,
+        )
+
+    def _template_schema(self) -> core_schema.CoreSchema:
+        """Generate schema for a `string.templatelib.Template` object."""
+        metadata = {'pydantic_js_functions': [lambda _1, _2: {'type': 'string'}]}
+        return core_schema.is_instance_schema(
+            Template,
             serialization=core_schema.to_string_ser_schema(),
             metadata=metadata,
         )

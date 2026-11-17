@@ -1710,6 +1710,30 @@ serialized as is.
 In [JSON mode](../concepts/serialization.md#json-mode), they are serialized as strings (note that flags
 are currently *not* preserved).
 
+## Template strings
+
+/// version-added | v2.15
+The `string.templatelib.Template` type, new in Python 3.14, is supported by Pydantic.
+///
+
+Standard library type: [`string.templatelib.Template`][string.templatelib.Template].
+
+<h3>Validation</h3>
+
+* [`Template`][string.templatelib.Template] instances are accepted as is.
+* Other input values are rejected.
+
+<h3>Strictness</h3>
+
+In [strict mode](../concepts/strict_mode.md), only [`Template`][string.templatelib.Template] instances are accepted.
+
+<h3>Serialization</h3>
+
+In [Python mode](../concepts/serialization.md#python-mode), [`Template`][string.templatelib.Template] instances are
+serialized as is.
+
+In [JSON mode](../concepts/serialization.md#json-mode), they are serialized as strings.
+
 <!-- old anchor added for backwards compatibility -->
 <!-- markdownlint-disable-next-line no-empty-links -->
 [](){#pathlibpath}

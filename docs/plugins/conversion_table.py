@@ -1123,6 +1123,13 @@ table_rows: list[Row] = [
         condition='The pattern type (`str` or `bytes`) must match.',
     ),
     Row(
+        'Template',
+        'Template',
+        strict=True,
+        python_input=True,
+        condition='`string.templatelib.Template` is only available in Python 3.14 and above.',
+    ),
+    Row(
         IPv4Address,
         IPv4Address,
         strict=True,

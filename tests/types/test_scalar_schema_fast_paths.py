@@ -2,10 +2,14 @@
 
 import datetime
 import re
+import sys
 from decimal import Decimal
 from types import EllipsisType
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
+
+if sys.version_info >= (3, 14):
+    from string.templatelib import Template
 
 import pytest
 from pydantic_core import SchemaSerializer, SchemaValidator, core_schema
@@ -17,6 +21,9 @@ from pydantic._internal._generate_schema import GenerateSchema
 from pydantic.json_schema import GenerateJsonSchema
 
 SPECIAL_TYPES = [datetime.date, datetime.datetime, datetime.time, datetime.timedelta, Decimal, ZoneInfo]
+# Template is accepted by the fast path only; it must not be exercised by `test_matches_general_path`,
+# which requires the general path to produce an equivalent schema (it doesn't for is-instance types).
+ADDITIONAL_FAST_PATH_TYPES = [Template] if sys.version_info >= (3, 14) else []
 
 
 @pytest.mark.parametrize(
@@ -128,7 +135,9 @@ def test_identity_gate() -> None:
     assert not _generate_schema._is_simple_schema_type(Tricky)
 
 
-@pytest.mark.parametrize('annotation', [object, EllipsisType, type, re.Pattern, *SPECIAL_TYPES])
+@pytest.mark.parametrize(
+    'annotation', [object, EllipsisType, type, re.Pattern, *SPECIAL_TYPES, *ADDITIONAL_FAST_PATH_TYPES]
+)
 def test_additional_type_eligibility(annotation: Any) -> None:
     assert _generate_schema._is_simple_schema_type(annotation)
 
