@@ -529,13 +529,8 @@ def test_model_construct_with_alias_choices_and_path() -> None:
     assert MyModel.model_construct(AAA={'aaa': 'a_value'}).a == 'a_value'
 
 
-@pytest.mark.xfail(
-    reason='`model_construct()` does not rebuild incomplete models, and relies on `FieldInfo` instances '
-    'that may be incomplete (here, the `Field()` metadata is part of the unevaluated annotation).',
-)
 def test_model_construct_incomplete_model() -> None:
-    # When making this test work, look at `test_string_annotation_union_type()` which assumes `model_construct()`
-    # doesn't rebuild the model.
+    """https://github.com/pydantic/pydantic/issues/13923"""
     class Model(BaseModel):
         a: 'Annotated[Later | None, Field(alias="A")]'
         b: 'Annotated[Later | None, Field(default=None)]'
@@ -550,3 +545,48 @@ def test_model_construct_incomplete_model() -> None:
     assert m.a is later
     assert m.b is None
     assert m.model_fields_set == {'a'}
+    # The model should have been rebuilt, so that it is fully defined now.
+    assert Model.__pydantic_complete__ is True
+
+
+def test_model_construct_incomplete_model_unresolvable() -> None:
+    """https://github.com/pydantic/pydantic/issues/13923
+
+    If the model cannot be rebuilt because the annotations can't be resolved,
+    `model_construct()` should not raise and should fall back to the current (incomplete) fields.
+    """
+    class Model(BaseModel):
+        a: 'Undefined'  # noqa: F821
+        b: 'AlsoUndefined'  # noqa: F821
+
+    assert Model.__pydantic_complete__ is False
+    assert Model.__pydantic_fields_complete__ is False
+
+    # Should not raise; falls back to the current (incomplete) fields. Values passed by field name
+    # are still picked up (matching the pre-rebuild behavior).
+    m = Model.model_construct(a=1, b=2)
+    assert Model.__pydantic_complete__ is False
+    assert m.a == 1
+    assert m.b == 2
+    assert m.model_fields_set == {'a', 'b'}
+
+
+def test_model_construct_defer_build_model() -> None:
+    """https://github.com/pydantic/pydantic/issues/13923
+
+    Models with `defer_build=True` have complete fields but a not-yet-built schema.
+    `model_construct()` should not build the schema eagerly.
+    """
+    class Model(BaseModel):
+        model_config = ConfigDict(defer_build=True)
+
+        a: 'int'
+        b: 'str' = 'default'
+
+    assert Model.__pydantic_complete__ is False
+    assert Model.__pydantic_fields_complete__ is True
+
+    m = Model.model_construct(a=1)
+    assert m.a == 1
+    assert m.b == 'default'
+    assert Model.__pydantic_complete__ is False

@@ -302,6 +302,10 @@ class BaseModel(metaclass=_model_construction.ModelMetaclass):
         Creates a new model setting `__dict__` and `__pydantic_fields_set__` from trusted or pre-validated data.
         Default values are respected, but no other validation is performed.
 
+        If the model is not fully defined yet (e.g. because of unresolved forward annotations), a rebuild of the model is attempted first,
+        so that the fields are as complete as possible. If the rebuild fails (for example, because the referenced types are still not defined),
+        the model is constructed with the (potentially incomplete) fields as they are.
+
         !!! note
             `model_construct()` generally respects the `model_config.extra` setting on the provided model.
             That is, if `model_config.extra == 'allow'`, then all extra passed values are added to the model instance's `__dict__`
@@ -318,6 +322,16 @@ class BaseModel(metaclass=_model_construction.ModelMetaclass):
         Returns:
             A new instance of the `Model` class with validated data.
         """
+        if not cls.__pydantic_complete__ and not cls.__pydantic_fields_complete__:
+            # The model is not fully defined yet (e.g. because of unresolved forward annotations).
+            # Fields collected at class definition time may be incomplete (e.g. missing aliases or defaults),
+            # so try to rebuild the model first. This is a best effort; if the rebuild fails (for example, because the
+            # referenced types are still not defined), fall back to the current (incomplete) fields.
+            # `defer_build=True` models are excluded here, as their fields are fully collected, only their schema building is deferred.
+            # `_parent_namespace_depth=3` because the model namespace is resolved from the frame of the caller of
+            # `model_construct()` (one extra frame compared to calling `model_rebuild()` directly).
+            cls.model_rebuild(raise_errors=False, _parent_namespace_depth=3)
+
         m = cls.__new__(cls)
         fields_values: dict[str, Any] = {}
         fields_set = set()

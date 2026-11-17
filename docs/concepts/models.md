@@ -568,6 +568,11 @@ Note that for [root models](#rootmodel-and-custom-root-types), the root value ca
 
 Here are some additional notes on the behavior of [`model_construct()`][pydantic.main.BaseModel.model_construct]:
 
+* If the model is not fully defined yet (for example, because of unresolved forward annotations), a rebuild of the model is
+  attempted first, so that (complete) field information such as aliases and defaults is available. If the rebuild fails
+  (for example, because the referenced types are still not defined), the model is constructed with the (potentially
+  incomplete) fields as they are. Models configured with `defer_build=True` are not rebuilt, as only their schema building
+  is deferred, not the collection of their fields.
 * When we say "no validation is performed" — this includes converting dictionaries to model instances. So if you have a field
   referring to a model type, you will need to convert the inner dictionary to a model yourself.
 * If you do not pass keyword arguments for fields with defaults, the default values will still be used.
