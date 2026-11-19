@@ -11,7 +11,7 @@ use pyo3::{IntoPyObjectExt, prelude::*};
 use pyo3::{PyTraverseError, PyVisit, intern};
 
 use enum_dispatch::enum_dispatch;
-use serde::ser::SerializeMap as _;
+use serde::ser::{Error as _, SerializeMap as _};
 use serde::{Serialize, Serializer};
 use serde_json::ser::{Formatter, PrettyFormatter};
 
@@ -24,11 +24,12 @@ use crate::serializers::errors::WrappedSerError;
 use crate::serializers::polymorphism_trampoline::PolymorphismTrampoline;
 use crate::serializers::ser::PythonSerializer;
 use crate::serializers::type_serializers::any::AnySerializer;
-use crate::tools::{SchemaDict, py_err};
+use crate::tools::{SchemaDict, py_err, safe_repr};
 
+use super::errors::SERIALIZATION_ERR_MARKER;
 use super::errors::se_err_py_err;
 use super::extra::SerializationState;
-use super::infer::{infer_json_key, infer_serialize, infer_to_python};
+use super::infer::{infer_json_key, infer_serialize, infer_to_python, serialize_unknown, unknown_type_error};
 
 pub(crate) trait BuildSerializer: Sized {
     const EXPECTED_TYPE: &'static str;
@@ -645,6 +646,15 @@ pub(crate) trait DoSerialize {
         state: &mut SerializationState<'py>,
     ) -> Result<Self::Ok, Self::Error>;
 
+    /// Serialize a value which has an invalid `__pydantic_serializer__` attribute, falling back to
+    /// type inference; if no fallback function is available, the `Unknown` behavior applies
+    /// (an error in JSON mode, the value as-is in python mode).
+    fn serialize_invalid_pydantic_serializer<'py>(
+        self,
+        value: &Bound<'py, PyAny>,
+        state: &mut SerializationState<'py>,
+    ) -> Result<Self::Ok, Self::Error>;
+
     fn serialize_str(self, value: &Bound<'_, PyString>) -> Result<Self::Ok, Self::Error>;
 
     type Map: SerializeMap<Ok = Self::Ok, Error = Self::Error>;
@@ -711,6 +721,23 @@ impl<'s> DoSerialize for SerializeToPython<'s> {
     ) -> PyResult<Py<PyAny>> {
         state.warn_fallback_py(name, value)?;
         infer_to_python(value, state)
+    }
+
+    fn serialize_invalid_pydantic_serializer<'py>(
+        self,
+        value: &Bound<'py, PyAny>,
+        state: &mut SerializationState<'py>,
+    ) -> PyResult<Py<PyAny>> {
+        state.warn_fallback_py("pydantic-serializable", value)?;
+        if let Some(fallback) = &state.extra.fallback {
+            let next_value = fallback.call1((value,))?;
+            infer_to_python(&next_value, state)
+        } else if matches!(state.extra.mode, SerMode::Json) && !state.extra.serialize_unknown {
+            Err(unknown_type_error(value))
+        } else {
+            // return the value as-is, mirroring the `Unknown` type handling
+            Ok(value.clone().unbind())
+        }
     }
 
     fn serialize_str(self, value: &Bound<'_, PyString>) -> Result<Py<PyAny>, PyErr> {
@@ -792,6 +819,31 @@ impl<S: Serializer> DoSerialize for SerializeToJson<S> {
     ) -> Result<S::Ok, WrappedSerError<S::Error>> {
         state.warn_fallback_ser::<S>(name, value).map_err(WrappedSerError)?;
         infer_serialize(value, self.serializer, state).map_err(WrappedSerError)
+    }
+
+    fn serialize_invalid_pydantic_serializer<'py>(
+        self,
+        value: &Bound<'py, PyAny>,
+        state: &mut SerializationState<'py>,
+    ) -> Result<S::Ok, WrappedSerError<S::Error>> {
+        state
+            .warn_fallback_ser::<S>("pydantic-serializable", value)
+            .map_err(WrappedSerError)?;
+        if let Some(fallback) = &state.extra.fallback {
+            let next_value = fallback.call1((value,))?;
+            infer_serialize(&next_value, self.serializer, state).map_err(WrappedSerError)
+        } else if state.extra.serialize_unknown {
+            self.serializer
+                .serialize_str(&serialize_unknown(value))
+                .map_err(WrappedSerError)
+        } else {
+            let msg = format!(
+                "{}Unable to serialize unknown type: {}",
+                SERIALIZATION_ERR_MARKER,
+                safe_repr(&value.get_type()),
+            );
+            Err(WrappedSerError(S::Error::custom(msg)))
+        }
     }
 
     fn serialize_str(self, value: &Bound<'_, PyString>) -> Result<S::Ok, WrappedSerError<S::Error>> {

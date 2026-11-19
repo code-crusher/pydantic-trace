@@ -11,6 +11,7 @@ from enum import Enum
 from functools import partial, partialmethod
 from re import Pattern
 from typing import Annotated, Any, ClassVar, Optional
+from unittest.mock import _Call, call
 
 import pytest
 from pydantic_core import (
@@ -1418,6 +1419,18 @@ def test_serialization_fallback() -> None:
     ta = TypeAdapter(Any)
 
     assert ta.dump_python(Arbitrary(), fallback=fallback) == 1
+
+
+def test_serialization_fallback_mock_call() -> None:
+    """https://github.com/pydantic/pydantic/issues/13734"""
+
+    def fallback(v: Any) -> Any:
+        if isinstance(v, _Call):
+            return v.args
+
+    ta = TypeAdapter(Any)
+
+    assert ta.dump_python(call(1, 2, 3), fallback=fallback, warnings=False) == (1, 2, 3)
 
 
 def test_wrap_ser_called_once() -> None:

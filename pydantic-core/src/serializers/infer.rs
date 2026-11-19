@@ -566,14 +566,14 @@ fn infer_serialize_known_unguarded<'py, S: Serializer>(
     }
 }
 
-fn unknown_type_error(value: &Bound<'_, PyAny>) -> PyErr {
+pub(crate) fn unknown_type_error(value: &Bound<'_, PyAny>) -> PyErr {
     PydanticSerializationError::new_err(format!(
         "Unable to serialize unknown type: {}",
         safe_repr(&value.get_type())
     ))
 }
 
-fn serialize_unknown<'py>(value: &Bound<'py, PyAny>) -> Cow<'py, str> {
+pub(crate) fn serialize_unknown<'py>(value: &Bound<'py, PyAny>) -> Cow<'py, str> {
     if let Ok(s) = value.str() {
         s.to_string_lossy().into_owned().into()
     } else if let Ok(name) = value.get_type().qualname() {
@@ -705,6 +705,10 @@ pub(crate) fn infer_json_key_known<'a, 'py>(
 /// type lazily when one of its attributes is accessed from Python. Casting it from Rust bypasses that
 /// mechanism, so we explicitly call its `rebuild()` method, which rebuilds the whole type and either
 /// returns the built serializer or raises a meaningful error.
+///
+/// `None` is also returned if the attribute exists but isn't a valid serializer (e.g. an object
+/// which merely fakes the `__pydantic_serializer__` attribute via `__getattr__`); in this case the
+/// value should fall back to regular type inference.
 pub(crate) fn get_pydantic_serializer<'py>(
     value: &Bound<'py, PyAny>,
 ) -> PyResult<Option<Bound<'py, SchemaSerializer>>> {
@@ -720,11 +724,19 @@ pub(crate) fn get_pydantic_serializer<'py>(
         let kwargs = PyDict::new(py);
         kwargs.set_item(intern!(py, "parent_namespace_depth"), 0)?;
         let rebuilt = py_serializer.call_method(intern!(py, "rebuild"), (), Some(&kwargs))?;
-        if !rebuilt.is_none() {
-            return Ok(Some(rebuilt.cast_into_exact()?));
+        if !rebuilt.is_none()
+            && let Ok(serializer) = rebuilt.cast_into_exact()
+        {
+            return Ok(Some(serializer));
         }
     }
-    Ok(Some(py_serializer.cast_into_exact()?))
+    if let Ok(serializer) = py_serializer.cast_into_exact() {
+        Ok(Some(serializer))
+    } else {
+        // the attribute is not a `SchemaSerializer` (nor a rebuildable placeholder), so don't treat
+        // the value as pydantic-serializable
+        Ok(None)
+    }
 }
 
 /// Serialize `value` as if it had a `__pydantic_serializer__` attribute
@@ -737,8 +749,10 @@ fn serialize_pydantic_serializable<'py, S: DoSerialize>(
 ) -> Result<S::Ok, S::Error> {
     match get_pydantic_serializer(value)? {
         Some(serializer) => call_pydantic_serializer(&serializer, value, state, do_serialize),
-        // `ObType::PydanticSerializable` was inferred from the attribute being present
-        None => Err(unknown_type_error(value).into()),
+        // `ObType::PydanticSerializable` was inferred from the attribute being present, but the
+        // attribute wasn't a valid serializer; inferring the value again would resolve to the
+        // same `PydanticSerializable` type and recurse indefinitely, so special-case the handling
+        None => do_serialize.serialize_invalid_pydantic_serializer(value, state),
     }
 }
 
