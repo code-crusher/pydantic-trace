@@ -380,6 +380,11 @@ impl BuildSerializer for FunctionWrapSerializer {
 }
 
 impl FunctionWrapSerializer {
+    /// The serializer that the function wraps, used by `PrebuiltSerializer`.
+    pub fn inner_serializer(&self) -> &Arc<CombinedSerializer> {
+        &self.serializer
+    }
+
     fn call<'py>(&self, value: &Bound<'py, PyAny>, state: &mut SerializationState<'py>) -> PyResult<(bool, Py<PyAny>)> {
         let py = value.py();
         if self.when_used.should_use(value, &state.extra) {
