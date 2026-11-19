@@ -665,6 +665,98 @@ def test_root_model_shallow_copy_private_attributes() -> None:
     assert copied._tag == 'copy'
 
 
+def test_root_model_private_attributes_use_slots() -> None:
+    """https://github.com/pydantic/pydantic/issues/13998"""
+
+    class Root(RootModel[int]):
+        _tag: str = PrivateAttr(default='original')
+
+    class Model(BaseModel):
+        a: int
+        _tag: str = PrivateAttr(default='original')
+
+    assert Root(1).__dict__ == {'root': 1}
+    assert Model(a=1).__dict__ == {'a': 1}
+
+    m = Root(1)
+    assert m.__pydantic_private__ == {'_tag': 'original'}
+    m._tag = 'modified'
+    assert m.__pydantic_private__ == {'_tag': 'modified'}
+    # The instance `__dict__` is untouched:
+    assert m.__dict__ == {'root': 1}
+
+
+def test_root_model_pickle_private_attributes(create_module) -> None:
+    """https://github.com/pydantic/pydantic/issues/13998"""
+
+    @create_module
+    def module():
+        from pydantic import PrivateAttr, RootModel
+
+        class Root(RootModel[int]):
+            _tag: str = PrivateAttr(default='original')
+
+    Root = module.Root
+
+    original = Root(1)
+    assert original.__getstate__() == {
+        '__dict__': {'root': 1},
+        '__pydantic_private__': {'_tag': 'original'},
+        '__pydantic_fields_set__': {'root'},
+    }
+
+    unpickled = pickle.loads(pickle.dumps(original))
+    assert unpickled is not original
+    assert unpickled == original
+    assert unpickled.__dict__ == {'root': 1}
+    assert unpickled.__pydantic_private__ == {'_tag': 'original'}
+    assert unpickled._tag == 'original'
+
+    # Unpickling a state created by older versions, where `__pydantic_private__` was
+    # part of `__dict__`, still works (and moves the value to the slot):
+    legacy = Root.__new__(Root)
+    legacy.__setstate__(
+        {
+            '__dict__': {'root': 1, '__pydantic_private__': {'_tag': 'legacy'}},
+            '__pydantic_fields_set__': {'root'},
+        }
+    )
+    assert legacy.__dict__ == {'root': 1}
+    assert legacy.__pydantic_private__ == {'_tag': 'legacy'}
+    assert legacy._tag == 'legacy'
+
+
+def test_root_model_deepcopy_private_attributes() -> None:
+    """https://github.com/pydantic/pydantic/issues/13998"""
+
+    class Root(RootModel[int]):
+        _data: dict[str, int] = PrivateAttr(default_factory=dict)
+
+    original = Root(1)
+    original._data['key'] = 42
+
+    copied = deepcopy(original)
+    assert copied == original
+    assert copied.__dict__ == {'root': 1}
+    assert copied._data == {'key': 42}
+    assert copied._data is not original._data
+
+
+def test_root_model_model_construct_private_attributes() -> None:
+    """https://github.com/pydantic/pydantic/issues/13998"""
+
+    class Root(RootModel[int]):
+        _tag: str = PrivateAttr(default='original')
+
+    m = Root.model_construct(1)
+    assert m.__dict__ == {'root': 1}
+    assert m.__pydantic_private__ == {'_tag': 'original'}
+    assert m._tag == 'original'
+
+    # `__pydantic_extra__` is still initialized (extra isn't supported on root models):
+    assert m.__pydantic_extra__ is None
+
+
 def test_root_model_deep_copy() -> None:
     class NestedListRootModel(RootModel[list[list[int]]]):
         pass

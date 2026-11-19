@@ -165,8 +165,11 @@ def test_extra():
 
     m = v.validate_python(1)
 
-    with pytest.raises(AttributeError):
-        _ = m.__pydantic_extra__
+    # Extra fields are not supported on root models, but the slot is still initialized (to `None`),
+    # so that it doesn't have to be provided as a class attribute (https://github.com/pydantic/pydantic/issues/13998):
+    assert m.__pydantic_extra__ is None
+    assert m.__pydantic_private__ is None
+    assert m.__dict__ == {'root': 1}
 
 
 def test_fields_set():

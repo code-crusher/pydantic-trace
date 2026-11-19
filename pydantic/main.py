@@ -355,12 +355,13 @@ class BaseModel(metaclass=_model_construction.ModelMetaclass):
         if _fields_set is None:
             _fields_set = fields_set
 
-        _extra: dict[str, Any] | None = values if cls.model_config.get('extra') == 'allow' else None
+        _extra: dict[str, Any] | None = (
+            values if cls.model_config.get('extra') == 'allow' and not cls.__pydantic_root_model__ else None
+        )
         _object_setattr(m, '__dict__', fields_values)
         _object_setattr(m, '__pydantic_fields_set__', _fields_set)
-        if not cls.__pydantic_root_model__:
-            _object_setattr(m, '__pydantic_extra__', _extra)
-            _object_setattr(m, '__pydantic_private__', None)
+        _object_setattr(m, '__pydantic_extra__', _extra)
+        _object_setattr(m, '__pydantic_private__', None)
 
         if cls.__pydantic_post_init__:
             m.model_post_init(None)

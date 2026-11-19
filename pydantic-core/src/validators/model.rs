@@ -291,8 +291,7 @@ impl ModelValidator {
             } else {
                 PySet::new(py, [root_field])?
             };
-            force_setattr(py, self_instance, intern!(py, DUNDER_FIELDS_SET_KEY), &fields_set)?;
-            force_setattr(py, self_instance, root_field, &output)?;
+            set_root_model_attrs(self_instance, root_field, &output, &fields_set)?;
         } else {
             let (model_dict, model_extra, fields_set) = self.validate_inner_fields(py, input, state)?;
             set_model_attrs(self_instance, &model_dict, &model_extra, &fields_set)?;
@@ -334,8 +333,7 @@ impl ModelValidator {
             } else {
                 PySet::new(py, [root_field])?
             };
-            force_setattr(py, &instance, intern!(py, DUNDER_FIELDS_SET_KEY), &fields_set)?;
-            force_setattr(py, &instance, root_field, output)?;
+            set_root_model_attrs(&instance, root_field, &output, &fields_set)?;
         } else {
             let (model_dict, model_extra, val_fields_set) = self.validate_inner_fields(py, input, state)?;
             instance = create_class(self.class.bind(py))?;
@@ -392,6 +390,23 @@ fn set_model_attrs(
     let py = instance.py();
     force_setattr(py, instance, intern!(py, DUNDER_DICT), model_dict)?;
     force_setattr(py, instance, intern!(py, DUNDER_MODEL_EXTRA_KEY), model_extra)?;
+    force_setattr(py, instance, intern!(py, DUNDER_MODEL_PRIVATE_KEY), py.None())?;
+    force_setattr(py, instance, intern!(py, DUNDER_FIELDS_SET_KEY), fields_set)?;
+    Ok(())
+}
+
+/// Set the attributes of a root model instance: `root`, `__pydantic_extra__`, `__pydantic_private__` and
+/// `__pydantic_fields_set__`. As extra fields are not supported on root models, `__pydantic_extra__` is
+/// always set to `None`.
+fn set_root_model_attrs(
+    instance: &Bound<'_, PyAny>,
+    root_field: &Bound<'_, PyString>,
+    root_value: &Py<PyAny>,
+    fields_set: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    let py = instance.py();
+    force_setattr(py, instance, root_field, root_value)?;
+    force_setattr(py, instance, intern!(py, DUNDER_MODEL_EXTRA_KEY), py.None())?;
     force_setattr(py, instance, intern!(py, DUNDER_MODEL_PRIVATE_KEY), py.None())?;
     force_setattr(py, instance, intern!(py, DUNDER_FIELDS_SET_KEY), fields_set)?;
     Ok(())
