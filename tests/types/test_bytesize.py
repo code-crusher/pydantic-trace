@@ -105,3 +105,32 @@ def test_bytesize_raises():
 
     with pytest.raises(PydanticCustomError, match='byte unit'):
         m.size.to('1ZiB')
+
+
+@pytest.mark.parametrize(
+    'size',
+    [
+        '1KB junk',
+        '1.5 MiB extra',
+        '  12  kb  trailing',
+        '1MB 2MB',
+        '1KB\njunk',
+    ],
+)
+def test_bytesize_rejects_trailing_data(size: str) -> None:
+    """https://github.com/pydantic/pydantic/issues/13519"""
+
+    class Model(BaseModel):
+        size: ByteSize
+
+    with pytest.raises(ValidationError, match='parse value'):
+        Model(size=size)
+
+
+def test_bytesize_allows_surrounding_whitespace() -> None:
+    class Model(BaseModel):
+        size: ByteSize
+
+    assert Model(size='  1MB  ').size == 1_000_000
+    assert Model(size=' 1 ').size == 1
+    assert Model(size='1MB').size == 1_000_000
