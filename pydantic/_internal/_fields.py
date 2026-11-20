@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Container, Mapping
 from functools import cache
 from inspect import Parameter, ismethoddescriptor
 from re import Pattern
@@ -235,6 +235,34 @@ def update_field_from_config(config_wrapper: ConfigWrapper, field_name: str, fie
         _apply_alias_generator_to_field_info(config_wrapper.alias_generator, field_name, field_info)
 
 
+def _collect_parent_fields_lookup(cls: type[BaseModel]) -> dict[str, FieldInfo]:
+    """Build the mapping of field names to the `FieldInfo` of the closest base in the MRO declaring them.
+
+    Each base only contributes the fields it *declares* (i.e. the ones present in its own annotations),
+    so that a base merely inheriting a field doesn't shadow the declaration of a base appearing later
+    in the MRO, as it would happen with plain Python attribute resolution:
+    https://github.com/pydantic/pydantic/issues/13678.
+
+    Classes created by parametrizing a generic model (e.g. `MyModel[int]`) don't carry annotations
+    of their own, but do carry the (substituted) fields, so they are considered as declaring all
+    of their fields.
+    """
+    parent_fields_lookup: dict[str, FieldInfo] = {}
+    for base in cls.__mro__[1:]:
+        if not (model_fields := base.__dict__.get('__pydantic_fields__')):
+            continue
+        if getattr(base, '__pydantic_generic_metadata__', {}).get('origin') is not None:
+            # Parametrized generic models carry the (substituted) fields but no annotations of their own,
+            # so all their fields are considered as declared on them:
+            declared_names: Container[str] = model_fields.keys()
+        else:
+            declared_names = _typing_extra.safe_get_annotations(base)
+        for name, field_info in model_fields.items():
+            if name in declared_names:
+                parent_fields_lookup.setdefault(name, field_info)
+    return parent_fields_lookup
+
+
 def collect_model_fields(  # noqa: C901
     cls: type[BaseModel],
     config_wrapper: ConfigWrapper,
@@ -273,10 +301,7 @@ def collect_model_fields(  # noqa: C901
     from ..fields import ModelPrivateAttr, PrivateAttr
 
     bases = cls.__bases__
-    parent_fields_lookup: dict[str, FieldInfo] = {}
-    for base in reversed(bases):
-        if model_fields := getattr(base, '__pydantic_fields__', None):
-            parent_fields_lookup.update(model_fields)
+    parent_fields_lookup = _collect_parent_fields_lookup(cls)
 
     type_hints = _typing_extra.get_model_type_hints(cls, ns_resolver=ns_resolver)
 

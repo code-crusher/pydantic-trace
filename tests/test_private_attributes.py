@@ -330,6 +330,56 @@ def test_private_attribute_multiple_inheritance():
     assert m.__dict__ == {}
 
 
+def test_private_attribute_multiple_inheritance_mro() -> None:
+    """https://github.com/pydantic/pydantic/issues/13678
+
+    A base that merely inherits a private attribute (without redeclaring it) shouldn't shadow
+    the declaration of a base appearing later in the MRO, matching plain Python attribute
+    resolution.
+    """
+
+    class Base(BaseModel):
+        _knob: str = 'base'
+
+    class Override(Base):
+        _knob: str = 'override'
+
+    class Plain(Base):
+        pass
+
+    class Swapped(Plain, Override):
+        pass
+
+    class Composed(Override, Plain):
+        pass
+
+    assert Swapped()._knob == 'override'
+    assert Composed()._knob == 'override'
+    assert Swapped.__private_attributes__['_knob'].default == 'override'
+    assert Composed.__private_attributes__['_knob'].default == 'override'
+
+
+def test_private_attribute_multiple_inheritance_declared_on_both_bases() -> None:
+    """https://github.com/pydantic/pydantic/issues/11700
+
+    When several bases redeclare a private attribute, the first one in the MRO wins.
+    """
+
+    class A(BaseModel):
+        _p: str = 'a'
+
+    class B(A):
+        _p: str = 'b'
+
+    class C(A):
+        _p: str = 'c'
+
+    class D(B, C):
+        pass
+
+    assert D()._p == 'b'
+
+
 def test_private_attributes_not_dunder() -> None:
     with pytest.raises(
         PydanticUserError,

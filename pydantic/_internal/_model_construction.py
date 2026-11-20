@@ -23,7 +23,13 @@ from ..errors import PydanticUndefinedAnnotation, PydanticUserError
 from ..plugin._schema_validator import create_schema_validator
 from ..warnings import GenericBeforeBaseModelWarning
 from ._config import ConfigWrapper
-from ._decorators import DecoratorInfos, PydanticDescriptorProxy, get_attribute_from_bases, unwrap_wrapped_function
+from ._decorators import (
+    DecoratorInfos,
+    PydanticDescriptorProxy,
+    get_attribute_from_bases,
+    mro_for_bases,
+    unwrap_wrapped_function,
+)
 from ._fields import (
     ModelNamespaceInfo,
     collect_model_fields,
@@ -311,12 +317,27 @@ class ModelMetaclass(ABCMeta):
         field_names: set[str] = set()
         class_vars: set[str] = set()
         private_attributes: dict[str, ModelPrivateAttr] = {}
-        for base in bases:
+        for base in mro_for_bases(bases):
             if issubclass(base, BaseModel) and base is not BaseModel:
                 # model_fields might not be defined yet in the case of generics, so we use getattr here:
                 field_names.update(getattr(base, '__pydantic_fields__', {}).keys())
                 class_vars.update(base.__class_vars__)
-                private_attributes.update(base.__private_attributes__)
+                base_private_attributes = base.__dict__.get('__private_attributes__')
+                if base_private_attributes:
+                    # Each base only contributes the private attributes it *declares* (i.e. the ones whose
+                    # `ModelPrivateAttr` instance isn't shared with one of its ancestors), so that a base
+                    # merely inheriting a private attribute doesn't shadow the declaration of a base
+                    # appearing later in the MRO, as would happen with plain Python attribute resolution:
+                    # https://github.com/pydantic/pydantic/issues/13678.
+                    inherited: set[str] = {
+                        name
+                        for parent in base.__mro__[1:]
+                        for name, attr in (parent.__dict__.get('__private_attributes__') or {}).items()
+                        if attr is base_private_attributes.get(name)
+                    }
+                    for name, attr in base_private_attributes.items():
+                        if name not in inherited:
+                            private_attributes.setdefault(name, attr)
         return field_names, class_vars, private_attributes
 
     @property
