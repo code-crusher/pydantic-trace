@@ -46,6 +46,58 @@ def test_union_error():
             assert m in str(w[0].message)
 
 
+def test_union_duck_typed_model():
+    """Serializing an arbitrary object should project the fields of the matching union choice,
+    just as serializing with a single (non-union) model schema does.
+
+    https://github.com/pydantic/pydantic/issues/13327
+    """
+
+    @dataclasses.dataclass
+    class Data:
+        id: int
+        name: str
+        description: str | None = None
+
+    schema = core_schema.union_schema(
+        [
+            core_schema.model_schema(
+                ModelB,
+                core_schema.model_fields_schema(
+                    {
+                        'c': core_schema.model_field(core_schema.bytes_schema()),
+                        'd': core_schema.model_field(core_schema.float_schema()),
+                    }
+                ),
+            ),
+            core_schema.model_schema(
+                ModelA,
+                core_schema.model_fields_schema(
+                    {
+                        'name': core_schema.model_field(core_schema.str_schema()),
+                        'description': core_schema.model_field(core_schema.str_schema()),
+                    }
+                ),
+            ),
+        ]
+    )
+    s = SchemaSerializer(schema)
+
+    input_value = Data(id=1, name='Obj 1', description='First object')
+
+    # `ModelB` shares no fields with the dataclass, so the second choice is used
+    expected = {'name': 'Obj 1', 'description': 'First object'}
+    assert s.to_python(input_value, warnings='error') == expected
+    assert s.to_python(input_value, mode='json', warnings='error') == expected
+    assert s.to_json(input_value, warnings='error') == b'{"name":"Obj 1","description":"First object"}'
+
+    # an object sharing no fields with any choice still falls back to inference, with warnings
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        assert s.to_python('a string') == 'a string'
+        assert len(w) == 1
+
+
 class ModelA:
     def __init__(self, a, b):
         self.a = a

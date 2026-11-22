@@ -150,6 +150,10 @@ impl TypeSerializer for TupleSerializer {
     fn retry_with_lax_check(&self) -> bool {
         true
     }
+
+    fn retry_with_duck_type_check(&self) -> bool {
+        self.serializers.iter().any(|s| s.retry_with_duck_type_check())
+    }
 }
 
 struct TupleSerializerEntry<'a, 'py> {

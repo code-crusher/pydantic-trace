@@ -99,4 +99,8 @@ impl TypeSerializer for MissingSentinelSerializer {
     fn retry_with_lax_check(&self) -> bool {
         self.serializer.as_ref().is_some_and(|s| s.retry_with_lax_check())
     }
+
+    fn retry_with_duck_type_check(&self) -> bool {
+        self.serializer.as_ref().is_some_and(|s| s.retry_with_duck_type_check())
+    }
 }

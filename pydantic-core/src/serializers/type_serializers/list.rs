@@ -121,4 +121,8 @@ impl TypeSerializer for ListSerializer {
     fn retry_with_lax_check(&self) -> bool {
         self.item_serializer.retry_with_lax_check()
     }
+
+    fn retry_with_duck_type_check(&self) -> bool {
+        self.item_serializer.retry_with_duck_type_check()
+    }
 }

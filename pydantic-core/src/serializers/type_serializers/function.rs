@@ -185,6 +185,13 @@ impl FunctionPlainSerializer {
             .is_some_and(|f| f.retry_with_lax_check())
             || self.return_serializer.retry_with_lax_check()
     }
+
+    fn retry_with_duck_type_check(&self) -> bool {
+        self.fallback_serializer
+            .as_ref()
+            .is_some_and(|f| f.retry_with_duck_type_check())
+            || self.return_serializer.retry_with_duck_type_check()
+    }
 }
 
 fn on_error(py: Python, err: PyErr, function_name: &str, state: &mut SerializationState<'_>) -> PyResult<()> {
@@ -277,6 +284,10 @@ macro_rules! function_type_serializer {
 
             fn retry_with_lax_check(&self) -> bool {
                 self.retry_with_lax_check()
+            }
+
+            fn retry_with_duck_type_check(&self) -> bool {
+                self.retry_with_duck_type_check()
             }
         }
     };
@@ -415,6 +426,10 @@ impl FunctionWrapSerializer {
 
     fn retry_with_lax_check(&self) -> bool {
         self.serializer.retry_with_lax_check() || self.return_serializer.retry_with_lax_check()
+    }
+
+    fn retry_with_duck_type_check(&self) -> bool {
+        self.serializer.retry_with_duck_type_check() || self.return_serializer.retry_with_duck_type_check()
     }
 }
 

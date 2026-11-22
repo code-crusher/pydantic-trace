@@ -44,6 +44,7 @@ impl BuildSerializer for DefinitionsSerializerBuilder {
 pub struct DefinitionRefSerializer {
     definition: DefinitionRef<Arc<CombinedSerializer>>,
     retry_with_lax_check: RecursionSafeCache<bool>,
+    retry_with_duck_type_check: RecursionSafeCache<bool>,
 }
 
 impl std::fmt::Debug for DefinitionRefSerializer {
@@ -51,6 +52,7 @@ impl std::fmt::Debug for DefinitionRefSerializer {
         f.debug_struct("DefinitionRefSerializer")
             .field("definition", &self.definition)
             .field("retry_with_lax_check", &self.retry_with_lax_check())
+            .field("retry_with_duck_type_check", &self.retry_with_duck_type_check())
             .finish()
     }
 }
@@ -68,6 +70,7 @@ impl BuildSerializer for DefinitionRefSerializer {
         Ok(CombinedSerializer::Recursive(Self {
             definition,
             retry_with_lax_check: RecursionSafeCache::new(),
+            retry_with_duck_type_check: RecursionSafeCache::new(),
         })
         .into())
     }
@@ -115,5 +118,12 @@ impl TypeSerializer for DefinitionRefSerializer {
         *self
             .retry_with_lax_check
             .get_or_init(|| self.definition.read(|s| s.unwrap().retry_with_lax_check()), &false)
+    }
+
+    fn retry_with_duck_type_check(&self) -> bool {
+        *self.retry_with_duck_type_check.get_or_init(
+            || self.definition.read(|s| s.unwrap().retry_with_duck_type_check()),
+            &false,
+        )
     }
 }

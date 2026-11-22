@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::string::ToString;
 use std::sync::Arc;
 
+use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pybacked::PyBackedStr;
 use pyo3::types::PyDict;
@@ -181,6 +182,25 @@ impl GeneralFieldsSerializer {
                 }
             }
         }
+    }
+
+    /// Whether the `__dict__` of `value` contains at least one of the fields of this serializer.
+    ///
+    /// Used to duck type arbitrary objects as models during union serialization.
+    pub(crate) fn fields_shared_with_value(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let py = value.py();
+        let Some(dict) = value.getattr_opt(intern!(py, "__dict__"))? else {
+            return Ok(false);
+        };
+        let Ok(dict) = dict.cast::<PyDict>() else {
+            return Ok(false);
+        };
+        for field in &self.fields.fields {
+            if dict.contains(field.key.as_py_str())? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn serialize<'py, S: DoSerialize>(

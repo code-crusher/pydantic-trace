@@ -7,10 +7,11 @@ import pickle
 import re
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
 from functools import partial, partialmethod
 from re import Pattern
-from typing import Annotated, Any, ClassVar, Optional
+from typing import Annotated, Any, ClassVar, Optional, Union
 
 import pytest
 from pydantic_core import (
@@ -1511,3 +1512,90 @@ def test_model_serializer_when_used_fallback_respects_include_exclude() -> None:
         assert m.model_dump(exclude={'b'}) == {'a': 1}
         assert m.model_dump(include={'a'}) == {'a': 1}
         assert m.model_dump(mode='json', exclude={'b'}) == {'ser': True}
+
+
+def test_union_duck_typed_serialization_matches_single_type() -> None:
+    """Serialization of arbitrary objects should not depend on the schema being a union.
+
+    https://github.com/pydantic/pydantic/issues/13327
+    """
+
+    @dataclass
+    class TestModel:
+        id: int
+        name: str
+        description: str | None = None
+        derived_from_id: int | None = None
+
+    class TestSchema(BaseModel):
+        derived_from_id: int | None = None
+
+    class DifferentTestSchema(BaseModel):
+        unique_field: str
+
+    objs = [
+        TestModel(id=1, name='Obj 1', description='First object'),
+        TestModel(id=2, name='Obj 2', description='Second object', derived_from_id=1),
+    ]
+    expected = b'[{"derived_from_id":null},{"derived_from_id":1}]'
+
+    # the single (non-union) schema projects the fields of the schema off the input objects
+    assert TypeAdapter(list[TestSchema]).dump_json(objs) == expected
+
+    # the same must hold when the schema is a union, in all the shapes from the issue
+    for schema_type in (
+        list[TestSchema] | DifferentTestSchema,
+        Union[list[TestSchema], DifferentTestSchema],  # noqa: UP007
+        list[TestSchema] | list[DifferentTestSchema],
+        list[TestSchema | DifferentTestSchema],
+    ):
+        ta = TypeAdapter(schema_type)
+        assert ta.dump_json(objs) == expected
+        assert ta.dump_python(objs) == [{'derived_from_id': None}, {'derived_from_id': 1}]
+        # no warnings are emitted, as the values are serialized as if the union wasn't there
+        ta.dump_json(objs, warnings='error')
+
+
+def test_union_duck_typed_serialization_ambiguous_branch() -> None:
+    """Objects sharing fields with several union members are serialized by the leftmost match.
+
+    https://github.com/pydantic/pydantic/issues/13327
+    """
+
+    @dataclass
+    class TestModel:
+        id: int
+        name: str
+
+    class SchemaA(BaseModel):
+        id: int
+
+    class SchemaB(BaseModel):
+        id: int
+        name: str
+
+    obj = TestModel(id=1, name='Obj 1')
+
+    assert TypeAdapter(SchemaA | SchemaB).dump_json(obj) == b'{"id":1}'
+    assert TypeAdapter(SchemaB | SchemaA).dump_json(obj) == b'{"id":1,"name":"Obj 1"}'
+
+
+def test_union_duck_typed_serialization_no_matching_fields() -> None:
+    """Objects sharing no fields with any union member still fall back to inference.
+
+    https://github.com/pydantic/pydantic/issues/13327
+    """
+
+    class TestSchema(BaseModel):
+        derived_from_id: int | None = None
+
+    class DifferentTestSchema(BaseModel):
+        unique_field: str
+
+    @dataclass
+    class Alien:
+        zzz: int = 1
+
+    ta = TypeAdapter(TestSchema | DifferentTestSchema)
+    with pytest.warns(UserWarning, match='PydanticSerializationUnexpectedValue'):
+        assert ta.dump_json(Alien()) == b'{"zzz":1}'

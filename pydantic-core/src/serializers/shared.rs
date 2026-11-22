@@ -450,6 +450,12 @@ pub(crate) trait TypeSerializer: Send + Sync + Debug {
         false
     }
 
+    /// Used by union serializers to decide if it's worth trying again with duck typed checking,
+    /// i.e. allowing the serializer to claim values which share fields with the schema
+    fn retry_with_duck_type_check(&self) -> bool {
+        false
+    }
+
     fn get_default(&self, _py: Python) -> PyResult<Option<Py<PyAny>>> {
         Ok(None)
     }

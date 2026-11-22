@@ -126,6 +126,9 @@ impl DataclassSerializer {
             SerCheck::Strict => Ok(value.get_type().is(self.class.bind(value.py()))),
             SerCheck::Lax => value.is_instance(self.class.bind(value.py())),
             SerCheck::None => value.hasattr(intern!(value.py(), "__dataclass_fields__")),
+            // values duck typed as dataclasses must still be actual dataclasses, which the other
+            // checks already cover
+            SerCheck::DuckTyped => Ok(false),
         }
     }
 

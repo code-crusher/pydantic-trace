@@ -146,13 +146,19 @@ impl ModelSerializer {
             SerCheck::Strict => Ok(value.get_type().is(&self.class)),
             SerCheck::Lax => value.is_instance(self.class.bind(value.py())),
             SerCheck::None => value.hasattr(intern!(value.py(), "__dict__")),
+            // duck typed values must share at least one field with the model, so that union
+            // choices can still be told apart from each other
+            SerCheck::DuckTyped => match self.serializer.as_ref() {
+                CombinedSerializer::Fields(fields) => fields.fields_shared_with_value(value),
+                _ => Ok(false),
+            },
         }
     }
 
     fn allow_value_root_model(&self, value: &Bound<'_, PyAny>, check: SerCheck) -> PyResult<bool> {
         match check {
             SerCheck::Strict => Ok(value.get_type().is(&self.class)),
-            SerCheck::Lax | SerCheck::None => value.is_instance(self.class.bind(value.py())),
+            SerCheck::Lax | SerCheck::None | SerCheck::DuckTyped => value.is_instance(self.class.bind(value.py())),
         }
     }
 
@@ -310,5 +316,9 @@ impl TypeSerializer for ModelSerializer {
 
     fn retry_with_lax_check(&self) -> bool {
         true
+    }
+
+    fn retry_with_duck_type_check(&self) -> bool {
+        !self.root_model && matches!(self.serializer.as_ref(), CombinedSerializer::Fields(_))
     }
 }

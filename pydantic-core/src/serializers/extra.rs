@@ -256,6 +256,8 @@ pub(crate) enum SerCheck {
     Strict,
     // check but allow subclasses
     Lax,
+    // check, but allow objects sharing at least one field with the schema to be duck typed
+    DuckTyped,
 }
 
 impl SerCheck {

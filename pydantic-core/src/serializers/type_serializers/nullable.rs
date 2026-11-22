@@ -75,4 +75,8 @@ impl TypeSerializer for NullableSerializer {
     fn retry_with_lax_check(&self) -> bool {
         self.serializer.retry_with_lax_check()
     }
+
+    fn retry_with_duck_type_check(&self) -> bool {
+        self.serializer.retry_with_duck_type_check()
+    }
 }
