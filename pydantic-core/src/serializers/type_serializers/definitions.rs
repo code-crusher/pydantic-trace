@@ -55,6 +55,15 @@ impl std::fmt::Debug for DefinitionRefSerializer {
     }
 }
 
+impl DefinitionRefSerializer {
+    /// The serializer this reference points to, if the definition has been filled and is still
+    /// alive (always the case for references inside a fully built `SchemaSerializer`).
+    #[allow(clippy::redundant_closure_for_method_calls)] // `Option::cloned` is ambiguous here
+    pub fn resolved_serializer(&self) -> Option<Arc<CombinedSerializer>> {
+        self.definition.read(|serializer| serializer.cloned())
+    }
+}
+
 impl BuildSerializer for DefinitionRefSerializer {
     const EXPECTED_TYPE: &'static str = "definition-ref";
 
