@@ -1,6 +1,10 @@
 [build-system]
 requires = ['maturin>=1.16.0,<2']
-build-backend = 'maturin'
+build-backend = 'pydantic_core_build'
+# `pydantic_core_build.py` is a thin wrapper around the `maturin` backend, that provides a
+# clearer error message when the interpreter isn't supported by the pinned version of PyO3
+# (see https://github.com/pydantic/pydantic/issues/13293):
+backend-path = ['.']
 
 [project]
 name = 'pydantic_core'

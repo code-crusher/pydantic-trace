@@ -8,6 +8,7 @@ repository = "https://github.com/pydantic/pydantic.git"
 readme = "README.md"
 include = [
     "/pyproject.toml",
+    "/pydantic_core_build.py",
     "/README.md",
     "/LICENSE",
     "/Makefile",
@@ -23,6 +24,21 @@ include = [
     "!*.so",
 ]
 rust-version = "1.88"
+
+# Maximum Python versions supported by the pinned version of PyO3, used by the
+# `pydantic_core_build.py` PEP 517 backend to provide a comprehensible error message
+# when no wheel is available for the running interpreter. This uses the same format
+# as the metadata published by `pyo3-ffi` (see the `[package.metadata]` section of
+# https://github.com/PyO3/pyo3/blob/main/pyo3-ffi/Cargo.toml) and must be kept in
+# sync with the `pyo3` dependency when it is bumped.
+[package.metadata.cpython]
+max-version = "3.15"
+
+[package.metadata.pypy]
+max-version = "3.12"
+
+[package.metadata.graalpy]
+max-version = "3.13"
 
 [dependencies]
 # TODO it would be very nice to remove the "py-clone" feature as it can panic,
