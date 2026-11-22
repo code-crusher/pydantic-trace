@@ -906,7 +906,12 @@ class GenerateJsonSchema:
         if self.mode == 'serialization' and temporal_format != 'iso8601':
             # Both `'seconds'` and `'milliseconds'` serialize to a number:
             return {'type': 'number'}
-        return {'type': 'string', 'format': format}
+        json_schema = {'type': 'string', 'format': format}
+        if self.mode == 'validation':
+            # In validation mode, numbers (e.g. a number of seconds for timedeltas, or a number of seconds
+            # since the Unix epoch for the other temporal types) are also valid inputs:
+            json_schema = {'anyOf': [{'type': 'number'}, json_schema]}
+        return json_schema
 
     def literal_schema(self, schema: core_schema.LiteralSchema) -> JsonSchemaValue:
         """Generates a JSON schema that matches a literal value.

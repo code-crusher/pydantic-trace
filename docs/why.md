@@ -200,7 +200,13 @@ A [JSON Schema](https://json-schema.org/) can be generated for any Pydantic sche
             }
         },
         'properties': {
-            'when': {'format': 'date-time', 'title': 'When', 'type': 'string'},
+            'when': {
+                'anyOf': [
+                    {'type': 'number'},
+                    {'format': 'date-time', 'type': 'string'},
+                ],
+                'title': 'When',
+            },
             'where': {'$ref': '#/$defs/Address'},
             'why': {'default': 'No idea', 'title': 'Why', 'type': 'string'},
         },
@@ -313,7 +319,13 @@ Pydantic provides four ways to create schemas and perform validation and seriali
     """
     {
         'properties': {
-            'when': {'format': 'date-time', 'title': 'When', 'type': 'string'},
+            'when': {
+                'anyOf': [
+                    {'type': 'number'},
+                    {'format': 'date-time', 'type': 'string'},
+                ],
+                'title': 'When',
+            },
             'where': {'format': 'binary', 'title': 'Where', 'type': 'string'},
             'why': {'title': 'Why', 'type': 'string'},
         },

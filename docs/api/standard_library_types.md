@@ -511,6 +511,39 @@ Pydantic also provides the following types to further constrain the allowed date
 In [strict mode](../concepts/strict_mode.md), only [`datetime`][datetime.datetime] instances are accepted. In JSON mode, only strings complying to the
 [RFC 3339](https://datatracker.ietf.org/doc/html/rfc3339) format (*only* datetime) or as unix timestamps are accepted.
 
+<h4>JSON Schema</h4>
+
+In validation mode, the generated JSON Schema accepts both numbers and strings, as both are valid inputs:
+
+```python
+from datetime import datetime
+
+from pydantic import BaseModel
+
+
+class Model(BaseModel):
+    dt: datetime
+
+
+print(Model.model_json_schema(mode='validation'))
+"""
+{
+    'properties': {
+        'dt': {
+            'anyOf': [{'type': 'number'}, {'format': 'date-time', 'type': 'string'}],
+            'title': 'Dt',
+        }
+    },
+    'required': ['dt'],
+    'title': 'Model',
+    'type': 'object',
+}
+"""
+```
+
+In serialization mode, the JSON Schema is `{'type': 'string', 'format': 'date-time'}`, unless the
+[`ser_json_temporal`][pydantic.ConfigDict.ser_json_temporal] configuration requires serializing to numbers.
+
 <h4>Example</h4>
 
 ```python
@@ -585,6 +618,39 @@ Pydantic also provides the following types to further constrain the allowed date
 In [strict mode](../concepts/strict_mode.md), only [`date`][datetime.date] instances are accepted. In JSON mode, only strings complying to the
 [RFC 3339](https://datatracker.ietf.org/doc/html/rfc3339) format (*only* date) or as unix timestamps are accepted.
 
+<h4>JSON Schema</h4>
+
+In validation mode, the generated JSON Schema accepts both numbers and strings, as both are valid inputs:
+
+```python
+from datetime import date
+
+from pydantic import BaseModel
+
+
+class Model(BaseModel):
+    d: date
+
+
+print(Model.model_json_schema(mode='validation'))
+"""
+{
+    'properties': {
+        'd': {
+            'anyOf': [{'type': 'number'}, {'format': 'date', 'type': 'string'}],
+            'title': 'D',
+        }
+    },
+    'required': ['d'],
+    'title': 'Model',
+    'type': 'object',
+}
+"""
+```
+
+In serialization mode, the JSON Schema is `{'type': 'string', 'format': 'date'}`, unless the
+[`ser_json_temporal`][pydantic.ConfigDict.ser_json_temporal] configuration requires serializing to numbers.
+
 <h4>Example</h4>
 
 ```python
@@ -650,6 +716,39 @@ library can also be used.
 In [strict mode](../concepts/strict_mode.md), only [`time`][datetime.time] instances are accepted. In JSON mode, only strings complying to the
 [RFC 3339](https://datatracker.ietf.org/doc/html/rfc3339) format are accepted.
 
+<h4>JSON Schema</h4>
+
+In validation mode, the generated JSON Schema accepts both numbers and strings, as both are valid inputs:
+
+```python
+from datetime import time
+
+from pydantic import BaseModel
+
+
+class Model(BaseModel):
+    t: time
+
+
+print(Model.model_json_schema(mode='validation'))
+"""
+{
+    'properties': {
+        't': {
+            'anyOf': [{'type': 'number'}, {'format': 'time', 'type': 'string'}],
+            'title': 'T',
+        }
+    },
+    'required': ['t'],
+    'title': 'Model',
+    'type': 'object',
+}
+"""
+```
+
+In serialization mode, the JSON Schema is `{'type': 'string', 'format': 'time'}`, unless the
+[`ser_json_temporal`][pydantic.ConfigDict.ser_json_temporal] configuration requires serializing to numbers.
+
 <h4>Example</h4>
 
 ```python
@@ -681,7 +780,12 @@ Standard library type: [`datetime.timedelta`][].
 <h4>Validation</h4>
 
 * [`timedelta`][datetime.timedelta] instances are validated as is.
-* Strings and bytes are validated according to the [RFC 3339](https://datatracker.ietf.org/doc/html/rfc3339) time format.
+* Strings and bytes are validated as durations, in one of the following formats:
+    * The [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601#Durations) duration format, e.g. `P3DT12H30M5S`.
+    * An optional number of days followed by an optional `HH:MM[:SS[.ffffff]]` time, e.g. `1 day, 01:02:03`,
+      `2 days` or `12:30:00`.
+
+    See the [speedate](https://docs.rs/speedate/latest/speedate/struct.Duration.html) documentation for more details.
 * Integers and floats (or values that can be coerced to such numbers) are validated as seconds.
 
 <h4>Constraints</h4>
@@ -709,7 +813,41 @@ In [JSON mode](../concepts/serialization.md#json-mode), they are serialized as s
 <h4>Strictness</h4>
 
 In [strict mode](../concepts/strict_mode.md), only [`timedelta`][datetime.timedelta] instances are accepted. In JSON mode, only strings complying to the
-[RFC 3339](https://datatracker.ietf.org/doc/html/rfc3339) format are accepted.
+[ISO 8601](https://en.wikipedia.org/wiki/ISO_8601#Durations) duration format are accepted.
+
+<h4>JSON Schema</h4>
+
+In validation mode, the generated JSON Schema accepts both numbers and strings, as both are valid inputs:
+
+```python
+from datetime import timedelta
+
+from pydantic import BaseModel
+
+
+class Model(BaseModel):
+    td: timedelta
+
+
+print(Model.model_json_schema(mode='validation'))
+"""
+{
+    'properties': {
+        'td': {
+            'anyOf': [{'type': 'number'}, {'format': 'duration', 'type': 'string'}],
+            'title': 'Td',
+        }
+    },
+    'required': ['td'],
+    'title': 'Model',
+    'type': 'object',
+}
+"""
+```
+
+In serialization mode, the JSON Schema is `{'type': 'string', 'format': 'duration'}`, unless the
+[`ser_json_timedelta`][pydantic.ConfigDict.ser_json_timedelta] or
+[`ser_json_temporal`][pydantic.ConfigDict.ser_json_temporal] configuration requires serializing to numbers.
 
 <h4>Example</h4>
 

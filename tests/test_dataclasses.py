@@ -629,7 +629,11 @@ def test_schema():
             },
             'id': {'title': 'Id', 'type': 'integer'},
             'name': {'default': 'John Doe', 'title': 'Name', 'type': 'string'},
-            'signup_ts': {'default': None, 'format': 'date-time', 'title': 'Signup Ts', 'type': 'string'},
+            'signup_ts': {
+                'anyOf': [{'type': 'number'}, {'format': 'date-time', 'type': 'string'}],
+                'default': None,
+                'title': 'Signup Ts',
+            },
         },
         'required': ['id'],
         'title': 'User',
@@ -939,7 +943,7 @@ def test_override_builtin_dataclass_nested_schema():
             'Meta': {
                 'properties': {
                     'modified_date': {
-                        'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                        'anyOf': [{'type': 'number'}, {'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
                         'title': 'Modified Date',
                     },
                     'seen_count': {'title': 'Seen Count', 'type': 'integer'},

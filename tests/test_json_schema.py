@@ -895,13 +895,17 @@ def test_list_union_dict(field_type, expected_schema):
     ],
 )
 def test_date_types(field_type, expected_schema):
+    """https://github.com/pydantic/pydantic/issues/13360"""
+
     class Model(BaseModel):
         a: field_type
 
-    attribute_schema = {'title': 'A'}
-    attribute_schema.update(expected_schema)
-
-    base_schema = {'title': 'Model', 'type': 'object', 'properties': {'a': attribute_schema}, 'required': ['a']}
+    base_schema = {
+        'title': 'Model',
+        'type': 'object',
+        'properties': {'a': {'title': 'A', 'anyOf': [{'type': 'number'}, expected_schema]}},
+        'required': ['a'],
+    }
 
     assert Model.model_json_schema() == base_schema
 
@@ -930,7 +934,12 @@ def test_date_types_ser_json_temporal(field_type, iso8601_format, ser_json_tempo
         expected_schema = {'title': 'A', 'type': 'number'}
 
     assert Model.model_json_schema(mode='serialization')['properties']['a'] == expected_schema
-    assert Model.model_json_schema(mode='validation')['properties']['a']['type'] == 'string'
+    # The temporal serialization format isn't reflected in the validation JSON Schema, and numbers
+    # are valid inputs in validation mode:
+    assert Model.model_json_schema(mode='validation')['properties']['a'] == {
+        'title': 'A',
+        'anyOf': [{'type': 'number'}, {'type': 'string', 'format': iso8601_format}],
+    }
 
 
 @pytest.mark.parametrize('ser_json_temporal', ['iso8601', 'seconds', 'milliseconds'])
@@ -973,6 +982,42 @@ def test_timedelta_ser_json_temporal_takes_precedence(config, expected_schema):
     assert Model.model_json_schema(mode='serialization')['properties']['a'] == {'title': 'A', **expected_schema}
 
 
+@pytest.mark.parametrize('mode', ['validation', 'serialization'])
+@pytest.mark.parametrize(
+    'field_type,format',
+    [(datetime, 'date-time'), (date, 'date'), (time, 'time'), (timedelta, 'duration')],
+)
+def test_temporal_types_match_validation_behavior(mode: JsonSchemaMode, field_type: type, format: str) -> None:
+    """Temporal types accept both numbers and strings in validation mode.
+
+    The generated JSON Schema should reflect that, see https://github.com/pydantic/pydantic/issues/13360.
+    """
+
+    ta = TypeAdapter(field_type)
+    json_schema = ta.json_schema(mode=mode)
+
+    if mode == 'validation':
+        expected: dict[str, Any] = {'anyOf': [{'type': 'number'}, {'type': 'string', 'format': format}]}
+    else:
+        expected = {'type': 'string', 'format': format}
+
+    assert json_schema == expected
+
+    # The schema should accept every value that validation accepts, in both input modes:
+    if mode == 'validation':
+        if field_type is date:
+            values: list[Any] = [1577836800, '2020-01-01']
+        elif field_type is time:
+            values = [45296, '12:34:56']
+        elif field_type is datetime:
+            values = [1577836800, '2020-01-01T00:00:00']
+        else:
+            values = [300, 'PT5M']
+
+        for value in values:
+            assert ta.validate_python(value) == ta.validate_json(json.dumps(value))
+
+
 @pytest.mark.parametrize(
     'interval',
     [
@@ -990,7 +1035,7 @@ def test_date_constrained_types_no_constraints(interval):
     assert Model.model_json_schema() == {
         'title': 'Model',
         'type': 'object',
-        'properties': {'a': {'title': 'A', 'type': 'string', 'format': 'date'}},
+        'properties': {'a': {'title': 'A', 'anyOf': [{'type': 'number'}, {'type': 'string', 'format': 'date'}]}},
         'required': ['a'],
     }
 
@@ -2041,12 +2086,15 @@ def test_model_default_temporal_validation_mode(config: ConfigDict) -> None:
         dt: datetime = datetime(2020, 1, 1)
 
     properties = Model.model_json_schema(mode='validation')['properties']
-    assert properties['duration'] == {'default': 'PT5M', 'format': 'duration', 'title': 'Duration', 'type': 'string'}
+    assert properties['duration'] == {
+        'anyOf': [{'type': 'number'}, {'format': 'duration', 'type': 'string'}],
+        'default': 'PT5M',
+        'title': 'Duration',
+    }
     assert properties['dt'] == {
+        'anyOf': [{'type': 'number'}, {'format': 'date-time', 'type': 'string'}],
         'default': '2020-01-01T00:00:00',
-        'format': 'date-time',
         'title': 'Dt',
-        'type': 'string',
     }
 
 
