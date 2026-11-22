@@ -355,10 +355,16 @@ class _BaseUrl:
     ) -> core_schema.CoreSchema:
         def wrap_val(v, h):
             if isinstance(v, source):
-                return v
-            if isinstance(v, _BaseUrl):
-                v = str(v)
-            core_url = h(v)
+                # the inner schema can be constrained (e.g. by `UrlConstraints` in `Annotated` metadata),
+                # so the underlying URL is revalidated to apply the constraints to already validated
+                # instances — the inner validator returns the same core URL if they don't change it
+                core_url = h(v._url)
+                if core_url is v._url:
+                    return v
+            elif isinstance(v, _BaseUrl):
+                core_url = h(str(v))
+            else:
+                core_url = h(v)
             instance = source.__new__(source)
             instance._url = core_url
             return instance
@@ -573,10 +579,16 @@ class _BaseMultiHostUrl:
     ) -> core_schema.CoreSchema:
         def wrap_val(v, h):
             if isinstance(v, source):
-                return v
-            if isinstance(v, _BaseMultiHostUrl):
-                v = str(v)
-            core_url = h(v)
+                # the inner schema can be constrained (e.g. by `UrlConstraints` in `Annotated` metadata),
+                # so the underlying URL is revalidated to apply the constraints to already validated
+                # instances — the inner validator returns the same core URL if they don't change it
+                core_url = h(v._url)
+                if core_url is v._url:
+                    return v
+            elif isinstance(v, _BaseMultiHostUrl):
+                core_url = h(str(v))
+            else:
+                core_url = h(v)
             instance = source.__new__(source)
             instance._url = core_url
             return instance

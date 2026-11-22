@@ -1138,6 +1138,61 @@ def test_custom_constraints() -> None:
         ta.validate_python('ftp://example.com')
 
 
+def test_custom_constraints_reject_existing_url_instance() -> None:
+    """https://github.com/pydantic/pydantic/issues/13170"""
+    HttpUrl = Annotated[AnyUrl, UrlConstraints(allowed_schemes=['http', 'https'])]
+    ta = TypeAdapter(HttpUrl)
+
+    url = ta.validate_python('https://example.com')
+    assert ta.validate_python(url) is url
+
+    with pytest.raises(ValidationError, check=lambda e: e.errors()[0]['type'] == 'url_scheme'):
+        ta.validate_python(AnyUrl('ftp://example.com'))
+
+    # other constraints are applied as well:
+    ta_max_length = TypeAdapter(Annotated[AnyUrl, UrlConstraints(max_length=10)])
+    with pytest.raises(ValidationError, check=lambda e: e.errors()[0]['type'] == 'url_too_long'):
+        ta_max_length.validate_python(AnyUrl('https://example.com/'))
+
+
+def test_custom_constraints_reject_existing_multi_host_url_instance() -> None:
+    """https://github.com/pydantic/pydantic/issues/13170"""
+    dsn = Annotated[PostgresDsn, UrlConstraints(allowed_schemes=['postgres'])]
+    ta = TypeAdapter(dsn)
+
+    existing = PostgresDsn('postgres://user:pass@localhost:5432/app')
+    assert ta.validate_python(existing) is existing
+
+    with pytest.raises(ValidationError, check=lambda e: e.errors()[0]['type'] == 'url_scheme'):
+        ta.validate_python(PostgresDsn('postgresql://user:pass@localhost:5432/app'))
+
+
+def test_model_validate_reapplies_url_constraints_to_existing_instance() -> None:
+    """https://github.com/pydantic/pydantic/issues/13170"""
+
+    class Model(BaseModel):
+        v: Annotated[AnyUrl, UrlConstraints(allowed_schemes=['http', 'https'])]
+
+    assert Model.model_validate({'v': AnyUrl('https://example.com')}).v == AnyUrl('https://example.com/')
+
+    with pytest.raises(ValidationError, check=lambda e: e.errors()[0]['type'] == 'url_scheme'):
+        Model.model_validate({'v': AnyUrl('file:///etc/passwd')})
+
+
+def test_url_constraints_reapplied_defaults_to_existing_instance() -> None:
+    """https://github.com/pydantic/pydantic/issues/13170
+
+    Defaults from `UrlConstraints` must also be applied to existing instances.
+    """
+    ta = TypeAdapter(Annotated[AnyUrl, UrlConstraints(default_port=8080)])
+    existing = AnyUrl('http://example.com')
+    assert str(ta.validate_python(existing)) == 'http://example.com:8080/'
+
+    ta_hosts = TypeAdapter(Annotated[PostgresDsn, UrlConstraints(default_path='/db')])
+    existing_dsn = PostgresDsn('postgres://user:pass@localhost:5432')
+    assert str(ta_hosts.validate_python(existing_dsn)) == 'postgres://user:pass@localhost:5432/db'
+
+
 def test_url_constraints_invalid_annotated_type() -> None:
     with pytest.raises(PydanticUserError):
         TypeAdapter(Annotated[str, UrlConstraints(max_length=1)])
